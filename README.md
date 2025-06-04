@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # qalqan_dsm
 
 Mobile application for QalqanDSM
@@ -14,3 +15,6 @@ A few resources to get you started if this is your first Flutter project:
 For help getting started with Flutter development, view the
 [online documentation](https://docs.flutter.dev/), which offers tutorials,
 samples, guidance on mobile development, and a full API reference.
+=======
+# QalqanDSM
+>>>>>>> 500433d14c8a22627a65862be38007ff99e6dd60
