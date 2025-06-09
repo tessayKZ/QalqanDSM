@@ -31,10 +31,10 @@ dependencies:
   flutter:
     sdk: flutter
 
-  matrix: ^0.28.1
+  matrix: ^0.39.4
   flutter_webrtc:  ^0.14.1
   flutter_olm: ^2.0.0
-  http: ^0.13.0
+  http: ^0.13.6
   permission_handler: ^12.0.0+1
   path_provider: ^2.0.15
   # The following adds the Cupertino Icons font to your application.
@@ -50,14 +50,19 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.3
 
+flutter_icons:
+    android: true
+    ios: true
+    image_path: "assets/icon.png"
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
 # The following section is specific to Flutter packages.
 flutter:
   assets:
-    - config.json
+    - assets/background.png
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
