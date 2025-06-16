@@ -142,7 +142,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'Welcome to QalqanDSM',
+                          'QalqanDSM',
                           style: Theme.of(context)
                               .textTheme
                               .titleLarge

@@ -162,6 +162,10 @@ class CallService {
       _handleAnswer(raw['content']);
     } else if (type == 'm.call.candidates') {
       _handleCandidates(raw['content']);
+        } else if (type == 'm.call.hangup') {
+          onStatus('Call ended');
+          _peerConnection?.close();
+          _localStream?.dispose();
     }
   }
 
