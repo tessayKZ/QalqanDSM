@@ -2,7 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../models/room.dart';
-import '../services/matrix_service.dart';
+import '../services/matrix_chat_service.dart';
 import 'audio_call_page.dart';
 
 class ChatDetailPage extends StatefulWidget {

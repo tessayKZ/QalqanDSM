@@ -1,7 +1,7 @@
 
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../services/matrix_service.dart';
+import '../services/matrix_chat_service.dart';
 import '../models/room.dart';
 import 'chat_detail_page.dart';
 

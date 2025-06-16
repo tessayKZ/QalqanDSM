@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'chat_list_page.dart';
-import '../services/matrix_service.dart';
+import '../services/matrix_chat_service.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
