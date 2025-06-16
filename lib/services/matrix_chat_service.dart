@@ -1,11 +1,8 @@
-/// File: lib/services/matrix_service.dart
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/room.dart';
 import '../models/message.dart';
 
-/// Сервис для логина, sync, получения списка комнат и сообщений, а также отправки.
 class MatrixService {
   static const String _homeServerUrl = 'https://webqalqan.com';
   static String? _accessToken;
@@ -20,9 +17,6 @@ class MatrixService {
 
   static String? get userId => _fullUserId;
 
-  /// Логинимся на Matrix-сервере (m.login.password).
-  /// При успешном логине сохраняет _accessToken и _fullUserId,
-  /// а затем вызывает syncOnce(), чтобы получить раздел rooms.join.
   static Future<bool> login({
     required String user,
     required String password,
@@ -46,7 +40,6 @@ class MatrixService {
       _fullUserId = data['user_id'] as String?;
       print('DEBUG: Login successful. user_id=$_fullUserId, token=$_accessToken');
 
-      // Первый sync после логина
       await syncOnce();
       return true;
     } else {
@@ -55,7 +48,6 @@ class MatrixService {
     }
   }
 
-  /// Публичный метод для однократного sync (GET /sync?timeout=30000).
   static Future<void> syncOnce() async {
     _lastSyncResponse = null;
     _nextBatch = null;
@@ -69,7 +61,6 @@ class MatrixService {
   static Future<void> _doSync() async {
     if (_accessToken == null) return;
 
-    // формируем GET-параметры
     final params = _nextBatch == null
         ? '?timeout=30000'
         : '?since=${Uri.encodeComponent(_nextBatch!)}&timeout=30000';
@@ -88,7 +79,6 @@ class MatrixService {
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       _lastSyncResponse = decoded;
-      // сохраняем новый токен для next_batch
       _nextBatch = decoded['next_batch'] as String?;
       print('>>> New next_batch=$_nextBatch');
     } else {
@@ -96,7 +86,6 @@ class MatrixService {
     }
   }
 
-  /// Запускает «вечный» цикл sync каждые [intervalMs] миллисекунд.
   static Future<void> startSyncLoop({int intervalMs = 5000}) async {
     if (_syncing) return;
     _syncing = true;
@@ -106,12 +95,10 @@ class MatrixService {
     }
   }
 
-  /// Останавливает «вечный» syncLoop.
   static void stopSyncLoop() {
     _syncing = false;
   }
 
-  /// Возвращает список комнат, в которых пользователь «joined» (resp['rooms']['join']).
   static List<Room> getJoinedRooms() {
     final resp = _lastSyncResponse;
     if (resp == null) return [];
@@ -123,7 +110,6 @@ class MatrixService {
     roomsSection.forEach((roomId, roomDataRaw) {
       final roomData = roomDataRaw as Map<String, dynamic>;
 
-      // 1) Получаем имя комнаты из state.events, если есть m.room.name
       String name = roomId;
       final stateEvents = roomData['state']?['events'] as List<dynamic>?;
       if (stateEvents != null) {
@@ -136,7 +122,6 @@ class MatrixService {
         }
       }
 
-      // 2) Находим последнее сообщение (m.room.message) для отображения «последнего сообщения» в списке комнат
       Map<String, dynamic>? lastMsg;
       final timelineEvents = roomData['timeline']?['events'] as List<dynamic>?;
       if (timelineEvents != null && timelineEvents.isNotEmpty) {
@@ -156,11 +141,6 @@ class MatrixService {
     return result;
   }
 
-  /// Возвращает из последнего /sync список событий (сообщений и звонков) указанной комнаты.
-  ///
-  /// — Игнорирует все m.call.candidates
-  /// — Если есть invite + hangup без answer → добавляет ровно одно «📞 Пропущенный звонок»
-  /// — Иначе отображает остальные звонковые события в порядке timeline
   static List<Message> getRoomMessages(String roomId) {
     final resp = _lastSyncResponse;
     if (resp == null) return [];
@@ -173,7 +153,6 @@ class MatrixService {
 
     final List<Message> result = [];
 
-    // 1) Проверяем, есть ли «invite + hangup без answer» → отметим, что это пропущенный звонок.
     bool sawInvite = false;
     bool sawAnswer = false;
     bool sawHangup = false;
@@ -188,7 +167,6 @@ class MatrixService {
 
     final bool missedCall = sawInvite && sawHangup && !sawAnswer;
     if (missedCall) {
-      // Найдём первый invite, чтобы взять sender
       Map<String, dynamic>? inviteEvent;
       for (var e in timelineEvents) {
         final ev = e as Map<String, dynamic>;
@@ -205,10 +183,8 @@ class MatrixService {
           type: MessageType.call,
         ));
       }
-      // Пропущенные звонки не комбинируем с другими звонковыми событиями
     }
 
-    // 2) Добавляем все текстовые сообщения (m.room.message)
     for (var e in timelineEvents) {
       final event = e as Map<String, dynamic>;
       final eventType = event['type'] as String? ?? '';
@@ -224,14 +200,12 @@ class MatrixService {
       }
     }
 
-    // 3) Если это НЕ пропущенный звонок (missedCall == false), добавляем остальные звонковые события
     if (!missedCall) {
       for (var e in timelineEvents) {
         final event = e as Map<String, dynamic>;
         final eventType = event['type'] as String? ?? '';
 
         if (eventType.startsWith('m.call.')) {
-          // Игнорируем кандидатов ICE
           if (eventType == 'm.call.candidates') continue;
 
           final sender = event['sender'] as String? ?? '';
@@ -259,7 +233,6 @@ class MatrixService {
     return result;
   }
 
-  /// Отправляет текстовое сообщение (m.room.message) и сразу делает _doSync(), чтобы получить его из сервера.
   static Future<void> sendMessage(String roomId, String text) async {
     if (_accessToken == null) return;
     final txnId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -283,81 +256,25 @@ class MatrixService {
     if (response.statusCode != 200 && response.statusCode != 201) {
       print('sendMessage failed ${response.statusCode}: ${response.body}');
     } else {
-      // Сразу делаем синхронизацию, чтобы сообщение появилось в кеше
       await _doSync();
     }
   }
-  static Future<void> sendCallInvite({
-    required String roomId,
-    required String callId,
-    required String partyId,
-    required String offer,
-    required String sdpType,
-  }) async {
-    if (_accessToken == null) return;
-    final txn = DateTime.now().millisecondsSinceEpoch.toString();
-    await http.put(
-      Uri.parse('$_homeServerUrl/_matrix/client/r0/rooms/$roomId/send/m.call.invite/$txn'),
-      headers: {
-        'Authorization': 'Bearer $_accessToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'call_id': callId,
-        'lifetime': 60000,
-        'version': '1',
-        'party_id': partyId,
-        'offer': {'type': sdpType, 'sdp': offer},
-      }),
-    );
-  }
 
-  /// Отправка m.call.candidates
-  static Future<void> sendCallCandidates({
-    required String roomId,
-    required String callId,
-    required String partyId,
-    required List<Map<String, dynamic>> candidates,
-  }) async {
-    if (_accessToken == null) return;
-    final txn = DateTime.now().millisecondsSinceEpoch.toString();
-    await http.put(
-      Uri.parse('$_homeServerUrl/_matrix/client/r0/rooms/$roomId/send/m.call.candidates/$txn'),
-      headers: {
-        'Authorization': 'Bearer $_accessToken',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'call_id': callId,
-        'version': '1',
-        'party_id': partyId,
-        'candidates': candidates,
-      }),
-    );
-  }
-
-  /// Грузит всю историю (старые сообщения + звонки) для комнаты [roomId],
-  /// возвращает список сообщений от старых к новым.
   static Future<List<Message>> fetchRoomHistory(String roomId) async {
     if (_accessToken == null) return [];
 
-    // Initial sync — сбрасываем prev_batch и делаем обычный sync
     await syncOnce();
 
-    // Вынимаем из последнего ответа timeline из указанной комнаты
     final roomSection = _lastSyncResponse?['rooms']?['join']?[roomId]
     as Map<String, dynamic>?;
     if (roomSection == null) return [];
 
-    // Берём события из последнего initial‐sync (последние N)
     final initialTimeline = (roomSection['timeline']?['events'] as List?)
         ?.cast<Map<String, dynamic>>() ??
         [];
 
-    // Смотрим на prev_batch, откуда пойдём назад
     String? prevBatch = roomSection['timeline']?['prev_batch'] as String?;
 
-    // Собираем более старые события через /messages?dir=b
     final olderRaw = <Map<String, dynamic>>[];
     if (prevBatch != null && prevBatch.isNotEmpty) {
       var from = prevBatch;
@@ -381,7 +298,6 @@ class MatrixService {
       }
     }
 
-    // Конвертер raw→Message
     Message? convert(Map<String, dynamic> e) {
       final type = e['type'] as String? ?? '';
       if (type.startsWith('m.room.message')) {
@@ -407,12 +323,11 @@ class MatrixService {
     }
 
     final all = <Message>[];
-    // Сначала самые старые
     for (var raw in olderRaw.reversed) {
       final m = convert(raw);
       if (m != null) all.add(m);
     }
-    // Потом последние N
+
     for (var raw in initialTimeline) {
       final m = convert(raw);
       if (m != null) all.add(m);

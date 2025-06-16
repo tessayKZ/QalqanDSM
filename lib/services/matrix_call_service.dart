@@ -37,6 +37,7 @@ Future<AppConfig> loadConfig() async {
 
 class CallService {
   final void Function(String status) onStatus;
+  final void Function(MediaStream stream) onAddRemoteStream;
 
   Client? _matrixClient;
   String? _loggedInUserId, _callId, _partyId;
@@ -44,7 +45,12 @@ class CallService {
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
 
-  CallService({ required this.onStatus });
+  MediaStream? get localStream => _localStream;
+
+  CallService({
+    required this.onStatus,
+    required this.onAddRemoteStream,
+  });
 
   Future<void> startCall({ required String roomId }) async {
     onStatus('Loading config...');
@@ -63,8 +69,8 @@ class CallService {
       _matrixClient = null;
     }
 
-    final mic = await Permission.microphone.request();
-    if (!mic.isGranted) {
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
       onStatus('Microphone permission denied');
       return;
     }
@@ -113,8 +119,13 @@ class CallService {
         ]
       };
       _peerConnection = await createPeerConnection(cfg, {});
-      _localStream!.getTracks().forEach((t) => _peerConnection?.addTrack(t, _localStream!));
-      await Helper.setSpeakerphoneOn(false);
+      _localStream!.getTracks().forEach((track) {
+        _peerConnection?.addTrack(track, _localStream!);
+      });
+
+      _peerConnection!.onAddStream = (MediaStream stream) {
+        onAddRemoteStream(stream);
+      };
 
       _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
       _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
@@ -136,7 +147,7 @@ class CallService {
       };
       final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
       await client.sendMessage(roomId, 'm.call.invite', txn, invite);
-      onStatus('Invite sent, waiting for answer…');
+      onStatus('Connecting…');
     } on MatrixException catch (e) {
       onStatus('Matrix error: $e');
     } catch (e) {
@@ -167,7 +178,7 @@ class CallService {
       await _peerConnection?.addCandidate(c);
     }
     _iceQueue.clear();
-    onStatus('Connection established');
+    onStatus('Connected');
   }
 
   Future<void> _handleCandidates(dynamic content) async {

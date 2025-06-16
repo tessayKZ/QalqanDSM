@@ -9,11 +9,36 @@ class LoginPage extends StatefulWidget {
   State<LoginPage> createState() => _LoginPageState();
 }
 
-class _LoginPageState extends State<LoginPage> {
+class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMixin {
   final TextEditingController _userController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
   String? _errorText;
+
+  late AnimationController _animController;
+  late Animation<double> _fadeAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 800),
+    );
+    _fadeAnimation = CurvedAnimation(
+      parent: _animController,
+      curve: Curves.easeIn,
+    );
+    _animController.forward();
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    _userController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   Future<void> _doLogin() async {
     final user = _userController.text.trim();
@@ -53,61 +78,104 @@ class _LoginPageState extends State<LoginPage> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.of(context).size;
     return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 32.0),
-                  child: Text(
-                    'QalqanDSM',
-                    style: Theme.of(context).textTheme.headlineLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                      shadows: [
-                        Shadow(
-                          blurRadius: 8.0,
-                          color: Colors.black45,
-                          offset: Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Card(
-                  elevation: 8,
+      body: Stack(
+        children: [
+          // Gradient background
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+          ),
+          // Blurred circles accent
+          Positioned(
+            top: -size.width * 0.3,
+            left: -size.width * 0.2,
+            child: Container(
+              width: size.width * 0.6,
+              height: size.width * 0.6,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Positioned(
+            bottom: -size.width * 0.4,
+            right: -size.width * 0.3,
+            child: Container(
+              width: size.width * 0.8,
+              height: size.width * 0.8,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          // Form card
+          Center(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.symmetric(horizontal: 24.0),
+                child: Card(
+                  elevation: 16,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(20),
                   ),
-                  color: Colors.white.withOpacity(0.85),
+                  color: Colors.white.withOpacity(0.95),
                   child: Padding(
-                    padding: const EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.all(24.0),
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Logo
+                        Image.asset(
+                          'assets/logo.png',
+                          width: 80,
+                          height: 80,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'Welcome to QalqanDSM',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(color: Colors.black87),
+                        ),
+                        const SizedBox(height: 24),
+                        // Username field
                         TextField(
                           controller: _userController,
                           decoration: InputDecoration(
-                            prefixIcon: Icon(Icons.person),
-                            labelText: 'Username',
+                            prefixIcon: const Icon(Icons.person_outline),
+                            hintText: 'Username',
+                            filled: true,
+                            fillColor: Colors.grey.shade200,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
                             ),
                           ),
                         ),
                         const SizedBox(height: 16),
+                        // Password field
                         TextField(
                           controller: _passwordController,
                           obscureText: true,
                           decoration: InputDecoration(
-                            prefixIcon: Icon(Icons.lock),
-                            labelText: 'Password',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            hintText: 'Password',
+                            filled: true,
+                            fillColor: Colors.grey.shade200,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
                             ),
                           ),
                         ),
@@ -117,29 +185,36 @@ class _LoginPageState extends State<LoginPage> {
                             _errorText!,
                             style: const TextStyle(
                               color: Colors.redAccent,
-                              fontWeight: FontWeight.w600,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ],
                         const SizedBox(height: 24),
+                        // Login button
                         SizedBox(
                           width: double.infinity,
-                          height: 48,
+                          height: 50,
                           child: ElevatedButton(
                             onPressed: _isLoading ? null : _doLogin,
                             style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF6A11CB),
+                              foregroundColor: Colors.white,
+                              elevation: 8,
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(12),
                               ),
-                              elevation: 4,
                             ),
                             child: _isLoading
                                 ? const CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation(Colors.white),
+                              valueColor: AlwaysStoppedAnimation(
+                                  Colors.white),
                             )
                                 : const Text(
                               'Log In',
-                              style: TextStyle(fontSize: 16),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
                           ),
                         ),
@@ -147,10 +222,10 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                   ),
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }

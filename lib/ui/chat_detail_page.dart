@@ -222,7 +222,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   child: TextField(
                     controller: _messageController,
                     decoration: const InputDecoration(
-                      hintText: 'Type a message',
+                      hintText: 'Type a message...',
                       border: InputBorder.none,
                     ),
                     onSubmitted: (_) => _sendMessage(),
