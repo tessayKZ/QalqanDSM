@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import '../services/matrix_chat_service.dart';
 import '../models/room.dart';
 import 'chat_detail_page.dart';
+import '../services/matrix_call_service.dart';
+import '../services/matrix_answer_service.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import '../services/auth_data.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({Key? key}) : super(key: key);
@@ -14,6 +18,11 @@ class ChatListPage extends StatefulWidget {
 
 class _ChatListPageState extends State<ChatListPage>
     with RouteAware, WidgetsBindingObserver {
+  late CallService _callService;
+  late MatrixAnswerService _answerService;
+  String? _callStatus;
+  MediaStream? _remoteStream;
+
   List<Room> _rooms = [];
   bool _loading = true;
   Timer? _timer;
@@ -22,7 +31,29 @@ class _ChatListPageState extends State<ChatListPage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+
+    _setupCallHandling();
     _startAutoSync();
+  }
+
+  Future<void> _setupCallHandling() async {
+    // 1) Загружаем ваш config (где хранится roomId и урл сервера)
+    final config = await loadConfig();
+
+    // 2) Создаём и настраиваем CallService
+    _callService = CallService(
+      onStatus: (status) => setState(() => _callStatus = status),
+      onAddRemoteStream: (stream) => setState(() => _remoteStream = stream),
+    );
+
+    // 3) Создаём и запускаем MatrixAnswerService
+       _answerService = MatrixAnswerService(
+             matrixClient: _callService.matrixClient,
+             roomId: config.roomId,
+             onStatus: (status) => setState(() => _callStatus = status),
+         onAddRemoteStream: (stream) => setState(() => _remoteStream = stream),
+       );
+    _answerService.init();
   }
 
   @override
@@ -79,7 +110,7 @@ class _ChatListPageState extends State<ChatListPage>
     return Scaffold(
       appBar: AppBar(title: const Text('Chats')),
       body: _rooms.isEmpty
-          ? const Center(child: Text('Нет комнат'))
+          ? const Center(child: Text('Нет чатов'))
           : RefreshIndicator(
         onRefresh: _doRefresh,
         child: ListView.builder(

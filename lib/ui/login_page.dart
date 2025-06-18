@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'chat_list_page.dart';
 import '../services/matrix_chat_service.dart';
+import 'package:qalqan_dsm/services/auth_data.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -65,7 +66,10 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       _isLoading = false;
     });
 
-    if (success) {
+  if (success) {
+    AuthDataCall.instance.login    = user;
+    AuthDataCall.instance.password = password;
+
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const ChatListPage()),
       );

@@ -13,7 +13,6 @@ class AudioCallPage extends StatefulWidget {
 
 class _AudioCallPageState extends State<AudioCallPage> {
   late final CallService _callService;
-
   bool _muted = false;
   bool _speakerOn = false;
   String _status = 'Connecting...';
@@ -43,7 +42,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
   }
 
   void _updateStatus(String status) {
-
+    // Start timer when connected
     if ((status == 'Connection established' || status == 'Connected') && !_stopwatch.isRunning) {
       setState(() {
         _status = 'Connected';
@@ -58,6 +57,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
+    // Stop timer when call ends
     if (status == 'Call ended' || status == 'Disconnected') {
       if (_stopwatch.isRunning) {
         _stopwatch.stop();
@@ -100,7 +100,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-
           Opacity(
             opacity: 0,
             child: RTCVideoView(
@@ -121,7 +120,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       ),
                       const SizedBox(height: 24),
                       const Text(
-                        'user2',
+                        'user',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 28,
@@ -130,6 +129,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       ),
                       const SizedBox(height: 8),
 
+                      // Show status or timer
                       if (_stopwatch.isRunning && !_callEnded) ...[
                         const Text(
                           'Connected',
@@ -147,16 +147,16 @@ class _AudioCallPageState extends State<AudioCallPage> {
                           ),
                         ),
                       ] else if (_callEnded) ...[
-                        Text(
-                          'Call ended: ${_formatDuration(_finalDuration)}',
-                          style: const TextStyle(
+                        const Text(
+                          'Call ended',
+                          style: TextStyle(
                             color: Colors.redAccent,
                             fontSize: 18,
                           ),
                         ),
-                      ] else ...[
+                        const SizedBox(height: 4),
                         Text(
-                          _status,
+                          _formatDuration(_finalDuration),
                           style: const TextStyle(
                             color: Colors.white70,
                             fontSize: 18,
@@ -202,7 +202,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
                     ),
                     _ActionButton(
                       icon: _speakerOn ? Icons.volume_up : Icons.hearing,
-                      label: _speakerOn ? 'Speaker' : 'Microphone',
+                      label: _speakerOn ? 'Speaker' : 'Mic',
                       color: Colors.grey,
                       onTap: () async {
                         setState(() => _speakerOn = !_speakerOn);
@@ -251,7 +251,8 @@ class _ActionButton extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text(label, style: const TextStyle(color: Colors.black87, fontSize: 14))
+        Text(label,
+            style: const TextStyle(color: Colors.black87, fontSize: 14))
       ],
     );
   }

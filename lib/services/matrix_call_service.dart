@@ -6,6 +6,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:matrix/matrix.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:qalqan_dsm/services/auth_data.dart';
 
 @immutable
 class AppConfig {
@@ -44,6 +45,7 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
+  Client get matrixClient => _matrixClient!;
 
   MediaStream? get localStream => _localStream;
 
@@ -83,8 +85,8 @@ class CallService {
       await client.checkHomeserver(Uri.parse(config.homeserver));
       final login = await client.login(
         LoginType.mLoginPassword,
-        identifier: AuthenticationUserIdentifier(user: config.username),
-        password: config.password,
+        identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
+        password: AuthDataCall.instance.password,
       );
       _loggedInUserId = login.userId;
       if (_loggedInUserId == null || _loggedInUserId!.isEmpty) {
@@ -162,10 +164,10 @@ class CallService {
       _handleAnswer(raw['content']);
     } else if (type == 'm.call.candidates') {
       _handleCandidates(raw['content']);
-        } else if (type == 'm.call.hangup') {
-          onStatus('Call ended');
-          _peerConnection?.close();
-          _localStream?.dispose();
+    } else if (type == 'm.call.hangup') {
+      onStatus('Call ended');
+      _peerConnection?.close();
+      _localStream?.dispose();
     }
   }
 
@@ -229,5 +231,42 @@ class CallService {
     _matrixClient?.dispose();
     _peerConnection?.close();
     _localStream?.dispose();
+  }
+}
+
+extension CallServiceAnswer on CallService {
+  /// Принимает входящий звонок:
+  /// 1) устанавливает remoteDescription из offer,
+  /// 2) генерирует SDP-ответ и отправляет его в Matrix
+  Future<void> answerCall({
+    required String roomId,
+    required String callId,
+    required Map<String, dynamic> offer,
+  }) async {
+    // 1) Устанавливаем удалённое описание из приглашения
+    final sdp  = offer['sdp']  as String;
+    final type = offer['type'] as String;
+    await _peerConnection?.setRemoteDescription(RTCSessionDescription(sdp, type));
+
+    // 2) Создаём ответ
+    final answer = await _peerConnection!.createAnswer({'offerToReceiveAudio': 1});
+    await _peerConnection!.setLocalDescription(answer);
+
+    // ICE-кандидаты будут собираться в onIceCandidate и отправляться отдельно
+
+    // 3) Отправляем m.call.answer
+    final body = {
+      'call_id': callId,
+      'answer': {
+        'type': answer.type,
+        'sdp': answer.sdp,
+      },
+      'version': '1',
+      'party_id': _partyId,
+    };
+    final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
+    await _matrixClient!.sendMessage(roomId, 'm.call.answer', txn, body);
+
+    onStatus('Call accepted');
   }
 }
