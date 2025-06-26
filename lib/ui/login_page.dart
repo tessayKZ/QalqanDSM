@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
-import 'chat_list_page.dart';
+import '../main.dart';
+import '../services/matrix_auth.dart';
 import '../services/matrix_chat_service.dart';
+import 'chat_list_page.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
 
 class LoginPage extends StatefulWidget {
@@ -57,21 +59,22 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       _errorText = null;
     });
 
-    final success = await MatrixService.login(
-      user: user,
-      password: password,
-    );
+    // Perform both SDK and HTTP logins
+    final sdkOk = await AuthService.login(user: user, password: password);
+    final chatOk = await MatrixService.login(user: user, password: password);
 
     setState(() {
       _isLoading = false;
     });
 
-  if (success) {
-    AuthDataCall.instance.login    = user;
-    AuthDataCall.instance.password = password;
+    if (sdkOk && chatOk) {
+      // Save credentials for call service
+      AuthDataCall.instance.login = user;
+      AuthDataCall.instance.password = password;
 
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const ChatListPage()),
+      // Navigate to chat list
+      navigatorKey.currentState?.pushReplacement(
+        MaterialPageRoute(builder: (_) => ChatListPage()),
       );
     } else {
       setState(() {
@@ -210,8 +213,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                             ),
                             child: _isLoading
                                 ? const CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation(
-                                  Colors.white),
+                              valueColor: AlwaysStoppedAnimation(Colors.white),
                             )
                                 : const Text(
                               'Log In',

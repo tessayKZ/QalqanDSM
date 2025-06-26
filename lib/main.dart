@@ -1,5 +1,9 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
+import 'routes/app_router.dart';
 import 'ui/login_page.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() {
   runApp(const MyApp());
@@ -11,22 +15,10 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'QalqanDSM',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
-        scaffoldBackgroundColor: Colors.transparent,
-      ),
-      home: const LoginPage(),
-      builder: (context, child) {
-        return Container(
-          decoration: const BoxDecoration(
-            image: DecorationImage(
-              image: AssetImage('assets/background.png'),
-              fit: BoxFit.cover,
-            ),
-          ),
-          child: child,
-        );
-      },
+      navigatorKey: navigatorKey,
+      onGenerateRoute: AppRouter.generate,
+      initialRoute: AppRouter.login,
+      theme: ThemeData(primarySwatch: Colors.blue),
     );
   }
 }

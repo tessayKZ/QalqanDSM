@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/matrix_chat_service.dart';
-import 'audio_call_page.dart';
+import '../services/matrix_call_service.dart';
+import '../services/matrix_auth.dart';
+import '../ui/audio_call_page.dart';
 
 class ChatDetailPage extends StatefulWidget {
   final Room room;
@@ -154,13 +156,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 title: const Text('Audio call'),
                 onTap: () {
                   Navigator.pop(context);
+                  MatrixCallService(AuthService.client!).createCall(roomId: widget.room.id);
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => AudioCallPage(roomId: widget.room.id),
+                      builder: (_) => AudioCallPage(
+                        roomId:    widget.room.id,
+                        isIncoming: false,
+                      ),
                     ),
                   );
                 },
               ),
+
               ListTile(
                 leading: const Icon(Icons.videocam),
                 title: const Text('Video call'),

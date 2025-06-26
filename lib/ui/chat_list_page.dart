@@ -1,13 +1,16 @@
+// lib/ui/chat_list_page.dart
 
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:flutter_callkit_incoming/entities/call_event.dart';
+import '../services/matrix_auth.dart';
+import '../services/matrix_call_service.dart';
 import '../services/matrix_chat_service.dart';
 import '../models/room.dart';
 import 'chat_detail_page.dart';
-import '../services/matrix_call_service.dart';
-import '../services/matrix_answer_service.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
-import '../services/auth_data.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({Key? key}) : super(key: key);
@@ -16,58 +19,55 @@ class ChatListPage extends StatefulWidget {
   State<ChatListPage> createState() => _ChatListPageState();
 }
 
-class _ChatListPageState extends State<ChatListPage>
-    with RouteAware, WidgetsBindingObserver {
-  late CallService _callService;
-  late MatrixAnswerService _answerService;
-  String? _callStatus;
-  MediaStream? _remoteStream;
-
-  List<Room> _rooms = [];
-  bool _loading = true;
-  Timer? _timer;
+class _ChatListPageState extends State<ChatListPage> {
+  late final MatrixCallService _callSvc;
+  List<Room> _rooms   = [];
+  bool       _loading = true;
+  Timer?     _timer;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
+    _callSvc = MatrixCallService(AuthService.client!);
 
-    _setupCallHandling();
+    _requestPermissions();
+
+    _callSvc.start();
+
+    FlutterCallkitIncoming.onEvent.listen((CallEvent? e) {
+      if (e == null) return;
+      final ev     = e.event;
+      final callId = e.body?['id'];
+
+      print('📞 got CallKit event: $ev, id=$callId');
+
+      switch (ev) {
+        case Event.actionCallIncoming:
+          break;
+        case Event.actionCallAccept:
+          print('📞 accept pressed for $callId');
+          _callSvc.handleCallkitAccept(callId);
+          break;
+        case Event.actionCallDecline:
+          print('📞 decline pressed for $callId');
+          FlutterCallkitIncoming.endCall(callId);
+          break;
+        default:
+          break;
+      }
+    });
+
     _startAutoSync();
   }
 
-  Future<void> _setupCallHandling() async {
-    // 1) Загружаем ваш config (где хранится roomId и урл сервера)
-    final config = await loadConfig();
-
-    // 2) Создаём и настраиваем CallService
-    _callService = CallService(
-      onStatus: (status) => setState(() => _callStatus = status),
-      onAddRemoteStream: (stream) => setState(() => _remoteStream = stream),
-    );
-
-    // 3) Создаём и запускаем MatrixAnswerService
-       _answerService = MatrixAnswerService(
-             matrixClient: _callService.matrixClient,
-             roomId: config.roomId,
-             onStatus: (status) => setState(() => _callStatus = status),
-         onAddRemoteStream: (stream) => setState(() => _remoteStream = stream),
-       );
-    _answerService.init();
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    MatrixService.stopSyncLoop();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      MatrixService.syncOnce().then((_) => _updateRooms());
+  Future<void> _requestPermissions() async {
+    if (Platform.isAndroid) {
+      if (await Permission.notification.isDenied) {
+        await Permission.notification.request();
+      }
+      if (!await Permission.systemAlertWindow.isGranted) {
+        await Permission.systemAlertWindow.request();
+      }
     }
   }
 
@@ -75,20 +75,13 @@ class _ChatListPageState extends State<ChatListPage>
     MatrixService.syncOnce().then((_) {
       _updateRooms();
       MatrixService.startSyncLoop(intervalMs: 5000);
-      _timer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _updateRooms();
-      });
+      _timer = Timer.periodic(const Duration(seconds: 5), (_) => _updateRooms());
     });
   }
 
   void _updateRooms() {
-    final rooms = MatrixService.getJoinedRooms();
     setState(() {
-      if (_rooms.isEmpty) {
-        _rooms = rooms;
-      } else if (rooms.isNotEmpty) {
-        _rooms = rooms;
-      }
+      _rooms   = MatrixService.getJoinedRooms();
       _loading = false;
     });
   }
@@ -99,6 +92,14 @@ class _ChatListPageState extends State<ChatListPage>
   }
 
   @override
+  void dispose() {
+    _timer?.cancel();
+    MatrixService.stopSyncLoop();
+    _callSvc.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (_loading) {
       return Scaffold(
@@ -106,41 +107,33 @@ class _ChatListPageState extends State<ChatListPage>
         body: const Center(child: CircularProgressIndicator()),
       );
     }
-
     return Scaffold(
       appBar: AppBar(title: const Text('Chats')),
-      body: _rooms.isEmpty
-          ? const Center(child: Text('Нет чатов'))
-          : RefreshIndicator(
+      body: RefreshIndicator(
         onRefresh: _doRefresh,
-        child: ListView.builder(
+        child: _rooms.isEmpty
+            ? const Center(child: Text('No chats'))
+            : ListView.builder(
           itemCount: _rooms.length,
-          itemBuilder: (ctx, index) {
-            final room = _rooms[index];
+          itemBuilder: (ctx, i) {
+            final room = _rooms[i];
             return ListTile(
               title: Text(room.name),
-              subtitle: Text(
-                room.lastMessage != null
-                    ? '${room.lastMessage!['sender']}: '
-                    '${room.lastMessage!['content']?['body'] ?? ''}'
-                    : '',
-              ),
+              subtitle: Text(room.lastMessage != null
+                  ? "${room.lastMessage!['sender']}: ${room.lastMessage!['content']?['body'] ?? ''}"
+                  : ''),
               onTap: () async {
                 await Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChatDetailPage(room: room),
-                  ),
+                  MaterialPageRoute(builder: (_) => ChatDetailPage(room: room)),
                 );
-                await _doRefresh();
+                _doRefresh();
               },
             );
           },
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          await _doRefresh();
-        },
+        onPressed: _doRefresh,
         child: const Icon(Icons.refresh),
       ),
     );

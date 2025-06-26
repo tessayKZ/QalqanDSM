@@ -1,11 +1,24 @@
+// lib/ui/audio_call_page.dart
+
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import '../services/matrix_call_service.dart';
+import '../services/matrix_answer_service.dart';
+import '../services/webrtc_helper.dart';
 
 class AudioCallPage extends StatefulWidget {
   final String roomId;
-  const AudioCallPage({Key? key, required this.roomId}) : super(key: key);
+  final bool isIncoming;
+  final String? callId;
+  final Map<String, dynamic>? offer;
+
+  const AudioCallPage({
+    Key? key,
+    required this.roomId,
+    this.isIncoming = false,
+    this.callId,
+    this.offer,
+  }) : super(key: key);
 
   @override
   State<AudioCallPage> createState() => _AudioCallPageState();
@@ -38,12 +51,23 @@ class _AudioCallPageState extends State<AudioCallPage> {
       },
     );
 
-    _callService.startCall(roomId: widget.roomId);
+    if (widget.isIncoming) {
+      // отвечаем на входящий
+      _callService.answerCall(
+        roomId: widget.roomId,
+        callId: widget.callId!,
+        offer: widget.offer!,
+      );
+    } else {
+      // стартуем исходящий
+      _callService.startCall(roomId: widget.roomId);
+    }
   }
 
   void _updateStatus(String status) {
-    // Start timer when connected
-    if ((status == 'Connection established' || status == 'Connected') && !_stopwatch.isRunning) {
+    // при подключении — запускаем таймер
+    if ((status == 'Connection established' || status == 'Connected') &&
+        !_stopwatch.isRunning) {
       setState(() {
         _status = 'Connected';
         _callEnded = false;
@@ -57,7 +81,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
-    // Stop timer when call ends
+    // при завершении — останавливаем таймер
     if (status == 'Call ended' || status == 'Disconnected') {
       if (_stopwatch.isRunning) {
         _stopwatch.stop();
@@ -73,6 +97,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
+    // прочие статусы
     setState(() {
       _status = status;
     });
@@ -100,6 +125,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
+          // скрытое видео-поле — только чтобы WebRTC работал
           Opacity(
             opacity: 0,
             child: RTCVideoView(
@@ -107,14 +133,16 @@ class _AudioCallPageState extends State<AudioCallPage> {
               objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
             ),
           ),
+
           Column(
             children: [
+              // аватар и таймер
               Expanded(
                 child: Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircleAvatar(
+                      const CircleAvatar(
                         radius: 70,
                         backgroundImage: AssetImage('assets/avatar.jpg'),
                       ),
@@ -128,8 +156,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-
-                      // Show status or timer
                       if (_stopwatch.isRunning && !_callEnded) ...[
                         const Text(
                           'Connected',
@@ -167,9 +193,11 @@ class _AudioCallPageState extends State<AudioCallPage> {
                   ),
                 ),
               ),
+
+              // кнопки управления
               Container(
-                padding: const EdgeInsets.symmetric(
-                    vertical: 20, horizontal: 40),
+                padding:
+                const EdgeInsets.symmetric(vertical: 20, horizontal: 40),
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.only(
@@ -252,7 +280,7 @@ class _ActionButton extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         Text(label,
-            style: const TextStyle(color: Colors.black87, fontSize: 14))
+            style: const TextStyle(color: Colors.black87, fontSize: 14)),
       ],
     );
   }
