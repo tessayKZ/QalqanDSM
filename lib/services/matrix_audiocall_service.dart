@@ -7,6 +7,7 @@ import 'package:matrix/matrix.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
+import 'package:qalqan_dsm/services/webrtc_helper.dart';
 
 @immutable
 class AppConfig {
@@ -135,6 +136,7 @@ class CallService {
       onStatus('Creating offer...');
       final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
       await _peerConnection!.setLocalDescription(offer);
+
 
       _peerConnection!.onIceCandidate = (RTCIceCandidate cand) {
         if (cand.candidate != null) _sendIce(roomId, cand);
