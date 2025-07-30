@@ -7,4 +7,6 @@ class AuthDataCall {
 
   String login = '';
   String password = '';
+
+  final Set<String> outgoingCallIds = {};
 }

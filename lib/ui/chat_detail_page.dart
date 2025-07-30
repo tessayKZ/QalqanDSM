@@ -156,7 +156,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 title: const Text('Audio call'),
                 onTap: () {
                   Navigator.pop(context);
-                  MatrixCallService(AuthService.client!).createCall(roomId: widget.room.id);
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => AudioCallPage(

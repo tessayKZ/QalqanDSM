@@ -1,5 +1,3 @@
-// lib/services/matrix_audio_call_service.dart
-
 import 'dart:async';
 import 'dart:convert';
 
@@ -100,8 +98,7 @@ class CallService {
         return;
       }
 
-      client.sync().catchError((e) => debugPrint('Sync error: $e'));
-      client.onEvent.stream.listen(_handleEvent);
+      startSyncLoop();
 
       onStatus('Accessing local media...');
       _localStream = await navigator.mediaDevices.getUserMedia({
@@ -124,9 +121,11 @@ class CallService {
       });
       _localStream!.getTracks().forEach((t) => _peerConnection?.addTrack(t, _localStream!));
 
-      _peerConnection!.onAddStream = (MediaStream stream) {
-        onAddRemoteStream(stream);
-      };
+            _peerConnection!.onTrack = (RTCTrackEvent event) {
+                if (event.streams.isNotEmpty) {
+                  onAddRemoteStream(event.streams[0]);
+                }
+              };
 
       _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
       _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
@@ -156,12 +155,16 @@ class CallService {
       final invite = {
         'call_id': _callId,
         'lifetime': 60000,
-        'offer': {'type': offer.type, 'sdp': offer.sdp},
-        'version': 1,
-        'party_id': _partyId,
+          'offer': {
+              'type': offer.type,
+              'sdp': offer.sdp
+          },
+      'version': 1,
+    'party_id': _partyId,
       };
       final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
       await client.sendMessage(roomId, 'm.call.invite', txn, invite);
+      AuthDataCall.instance.outgoingCallIds.add(_callId!);
       onStatus('Connecting…');
     } on MatrixException catch (e) {
       onStatus('Matrix error: $e');
@@ -241,11 +244,38 @@ class CallService {
     await matrixClient.sendMessage(roomId, 'm.call.candidates', txn, body);
   }
 
+  bool _disposed = false;
+  String? _sinceToken;
+
+    void startSyncLoop() {
+        // Слушаем все события m.call.* и разбираем внутри _handleEvent
+        _matrixClient!.onEvent.stream
+               .listen(_handleEvent, onError: (err) => onStatus('Sync error: $err'));
+        _runSyncLoop();
+      }
+
+  Future<void> _runSyncLoop() async {
+    while (!_disposed) {
+      try {
+        final resp = await _matrixClient!.sync(
+          since: _sinceToken,
+          timeout: 30000,
+        );
+        _sinceToken = resp.nextBatch;
+      } catch (e) {
+        debugPrint('Sync loop error: $e');
+        await Future.delayed(Duration(seconds: 1));
+      }
+    }
+  }
+
   Future<void> dispose() async {
-    await _matrixClient?.logout().catchError((_) {});
-    _matrixClient?.dispose();
-    _peerConnection?.close();
-    _localStream?.dispose();
+    _disposed = true;
+    if (_matrixClient != null) {
+      await _matrixClient!.logout().catchError((_) {});
+      _matrixClient!.dispose();
+      _matrixClient = null;
+    }
   }
 }
 
@@ -255,23 +285,24 @@ extension CallServiceAnswer on CallService {
     required String callId,
     required Map<String, dynamic> offer,
   }) async {
+    _callId = callId;
     onStatus('Loading config...');
     final config = await loadConfig();
 
     onStatus('Logging in...');
-    _matrixClient?.dispose();
-    _matrixClient = Client('AnswerServiceClient');
-    await _matrixClient!.init();
-    await _matrixClient!.checkHomeserver(Uri.parse(config.homeserver));
-    final login = await _matrixClient!.login(
-      LoginType.mLoginPassword,
-      identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
-      password: AuthDataCall.instance.password,
-    );
-    _loggedInUserId = login.userId;
+        _matrixClient?.dispose();
+        _matrixClient = Client('AnswerServiceClient');
+        await _matrixClient!.init();
+        await _matrixClient!.checkHomeserver(Uri.parse(config.homeserver));
+        final login = await _matrixClient!.login(
+          LoginType.mLoginPassword,
+          identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
+          password: AuthDataCall.instance.password,
+        );
+        _loggedInUserId = login.userId;
+    final answerClient = _matrixClient!;
+    startSyncLoop();
     _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
-        _matrixClient!.sync().catchError((e) => debugPrint('Sync err: $e'));
-        _matrixClient!.onEvent.stream.listen(_handleEvent);
     onStatus('Accessing local media...');
     final mic = await Permission.microphone.request();
     if (!mic.isGranted) {
@@ -287,7 +318,7 @@ extension CallServiceAnswer on CallService {
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
         {
-          'urls': 'turn:your.turn.server:3478',
+          'urls': 'turn:webqalqan.com:3478',
           'username': 'turnuser',
           'credential': 'turnpass',
         }
@@ -298,32 +329,39 @@ extension CallServiceAnswer on CallService {
     });
     _localStream!.getTracks().forEach((t) => _peerConnection!.addTrack(t, _localStream!));
 
-    _peerConnection!.onTrack = (event) {
-      if (event.streams.isNotEmpty) onAddRemoteStream(event.streams[0]);
-      onStatus('Connected');
+        final localClient = _matrixClient!;
+        final localRoomId = roomId;
+        final localPartyId = _partyId!;
+
+    _peerConnection!.onTrack = (RTCTrackEvent event) {
+      if (event.streams.isNotEmpty) {
+        onAddRemoteStream(event.streams[0]);
+        onStatus('Connected');
+      }
     };
 
-    _peerConnection!.onIceCandidate = (RTCIceCandidate? c) async {
-      if (c == null) return;
-      final iceBody = {
-        'call_id': callId,
-        'party_id': _partyId,
-        'version': 1,
-        'candidates': [
-          {
-            'candidate': c.candidate,
-            'sdpMid': c.sdpMid,
-            'sdpMLineIndex': c.sdpMLineIndex,
-          }
-        ],
-      };
-      await matrixClient.sendMessage(
-        roomId,
-        'm.call.candidates',
-        'txn_${DateTime.now().millisecondsSinceEpoch}',
-        iceBody,
-      );
-    };
+        _peerConnection!.onIceCandidate = (RTCIceCandidate? c) async {
+            if (c == null) return;
+            final iceBody = {
+              'call_id': callId,
+              'party_id': localPartyId,
+              'version': 1,
+              'candidates': [
+                {
+                  'candidate': c.candidate,
+                  'sdpMid': c.sdpMid,
+                  'sdpMLineIndex': c.sdpMLineIndex,
+                }
+              ],
+            };
+            // используем локальную переменную, а не matrixClient
+            await localClient.sendMessage(
+              localRoomId,
+              'm.call.candidates',
+              'txn_${DateTime.now().millisecondsSinceEpoch}',
+              iceBody,
+            );
+          };
 
     _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {

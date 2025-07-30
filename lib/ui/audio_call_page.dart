@@ -1,5 +1,3 @@
-// lib/ui/audio_call_page.dart
-
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -52,20 +50,17 @@ class _AudioCallPageState extends State<AudioCallPage> {
     );
 
     if (widget.isIncoming) {
-      // отвечаем на входящий
       _callService.answerCall(
         roomId: widget.roomId,
         callId: widget.callId!,
         offer: widget.offer!,
       );
     } else {
-      // стартуем исходящий
       _callService.startCall(roomId: widget.roomId);
     }
   }
 
   void _updateStatus(String status) {
-    // при подключении — запускаем таймер
     if ((status == 'Connection established' || status == 'Connected') &&
         !_stopwatch.isRunning) {
       setState(() {
@@ -81,7 +76,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
-    // при завершении — останавливаем таймер
     if (status == 'Call ended' || status == 'Disconnected') {
       if (_stopwatch.isRunning) {
         _stopwatch.stop();
@@ -97,7 +91,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
-    // прочие статусы
     setState(() {
       _status = status;
     });
@@ -125,7 +118,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
       backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // скрытое видео-поле — только чтобы WebRTC работал
           Opacity(
             opacity: 0,
             child: RTCVideoView(
@@ -136,7 +128,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
 
           Column(
             children: [
-              // аватар и таймер
               Expanded(
                 child: Center(
                   child: Column(
@@ -193,8 +184,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
                   ),
                 ),
               ),
-
-              // кнопки управления
               Container(
                 padding:
                 const EdgeInsets.symmetric(vertical: 20, horizontal: 40),

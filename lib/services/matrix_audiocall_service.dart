@@ -55,120 +55,120 @@ class CallService {
   });
 
   Future<void> startCall({ required String roomId }) async {
-    onStatus('Loading config...');
-    late AppConfig config;
-    try {
-      config = await loadConfig();
-    } catch (e) {
+    onStatus('Loading config…');
+    final config = await loadConfig().catchError((e) {
       onStatus('Failed to load config: $e');
-      return;
+      return Future<AppConfig?>.value(null);
+    });
+    if (config == null) return;
+
+    onStatus('Initializing Matrix client…');
+    _disposeMatrixClientIfNeeded();
+
+    // 1) Получаем доступ к микрофону
+    final mic = await Permission.microphone.request();
+    if (!mic.isGranted) {
+      return onStatus('Microphone permission denied');
     }
 
-    onStatus('Initializing Matrix client...');
-    if (_matrixClient != null) {
-      await _matrixClient!.logout().catchError((_) {});
-      _matrixClient!.dispose();
-      _matrixClient = null;
+    // 2) Логинимся в Matrix
+    _matrixClient = Client('CallServiceClient')..backgroundSync = true;
+    await _matrixClient!.init();
+    await _matrixClient!.checkHomeserver(Uri.parse(config.homeserver));
+    final login = await _matrixClient!.login(
+      LoginType.mLoginPassword,
+      identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
+      password: AuthDataCall.instance.password,
+    );
+    _loggedInUserId = login.userId;
+    onStatus('Logged in as $_loggedInUserId');
+
+    // 3) Активируем синхронизацию и слушаем события
+    _matrixClient!
+      ..sync()
+      ..onEvent.stream.listen(_handleEvent, onError: (e) => debugPrint('Sync error: $e'));
+
+    onStatus('Accessing local media…');
+    _localStream = await navigator.mediaDevices.getUserMedia({
+      'audio': {'echoCancellation': true, 'noiseSuppression': true},
+      'video': false,
+    });
+
+    final cfg = {
+      'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {
+          'urls': 'turn:webqalqan.com:3478',
+          'username': 'turnuser',
+          'credential': 'turnpass',
+        }
+      ]
+    };
+    _peerConnection = await createPeerConnection(cfg, {
+      'sdpSemantics': 'unified-plan',
+    });
+
+    for (var track in _localStream!.getTracks()) {
+      await _peerConnection!.addTrack(track, _localStream!);
     }
 
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) {
-      onStatus('Microphone permission denied');
-      return;
-    }
-
-    final client = Client('CallServiceClient');
-    _matrixClient = client;
-
-    try {
-      await client.init();
-      await client.checkHomeserver(Uri.parse(config.homeserver));
-      final login = await client.login(
-        LoginType.mLoginPassword,
-        identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
-        password: AuthDataCall.instance.password,
-      );
-      _loggedInUserId = login.userId;
-      if (_loggedInUserId == null || _loggedInUserId!.isEmpty) {
-        onStatus('Login succeeded but no userId');
-        return;
+    _peerConnection!
+      ..onTrack = (RTCTrackEvent e) {
+        if (e.streams.isNotEmpty) onAddRemoteStream(e.streams[0]);
       }
-      onStatus('Logged in as $_loggedInUserId');
-
-      final room = client.getRoomById(roomId);
-      if (room == null) {
-        onStatus('Room not found: $roomId');
-        return;
+      ..onIceCandidate = (candidate) {
+        if (candidate.candidate != null) _sendIce(roomId, candidate);
       }
-
-      client.sync().catchError((e) => debugPrint('Sync error: $e'));
-      client.onEvent.stream.listen(_handleEvent);
-
-      onStatus('Accessing local media...');
-      _localStream = await navigator.mediaDevices.getUserMedia({
-        'audio': {'echoCancellation': true, 'noiseSuppression': true},
-        'video': false,
-      });
-
-      final cfg = {
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'},
-          {
-            'urls': 'turn:your.turn.server:3478',
-            'username': 'turnuser',
-            'credential': 'turnpass',
-          }
-        ]
-      };
-      _peerConnection = await createPeerConnection(cfg, {});
-      _localStream!.getTracks().forEach((track) {
-        _peerConnection?.addTrack(track, _localStream!);
-      });
-
-      _peerConnection!.onAddStream = (MediaStream stream) {
-        onAddRemoteStream(stream);
+      ..onIceGatheringState = (state) {
+        debugPrint('ICE gathering state: $state');
+        if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
+          _sendIce(roomId, null);
+        }
+      }
+      ..onIceConnectionState = (state) {
+        debugPrint('ICE connection state: $state');
+        if (state ==
+            RTCIceConnectionState.RTCIceConnectionStateConnected) {
+          onStatus('Connected');
+        }
       };
 
-      _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
-      _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
+    _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
+    _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
 
-      onStatus('Creating offer...');
-      final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
-      await _peerConnection!.setLocalDescription(offer);
+    onStatus('Creating offer…');
+    final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
+    await _peerConnection!.setLocalDescription(offer);
 
+    final invite = {
+      'call_id': _callId,
+      'lifetime': 60000,
+      'offer': {'type': offer.type, 'sdp': offer.sdp},
+      'version': 1,
+      'party_id': _partyId,
+    };
+    final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
+    await _matrixClient!.sendMessage(roomId, 'm.call.invite', txn, invite);
 
-      _peerConnection!.onIceCandidate = (RTCIceCandidate cand) {
-        if (cand.candidate != null) _sendIce(roomId, cand);
-      };
-
-      final invite = {
-        'call_id': _callId,
-        'lifetime': 60000,
-        'offer': {'type': 'offer', 'sdp': offer.sdp},
-        'version': '1',
-        'party_id': _partyId,
-      };
-      final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-      await client.sendMessage(roomId, 'm.call.invite', txn, invite);
-      onStatus('Connecting…');
-    } on MatrixException catch (e) {
-      onStatus('Matrix error: $e');
-    } catch (e) {
-      onStatus('Unexpected error: $e');
-    }
+    onStatus('Connecting…');
   }
 
+
   void _handleEvent(EventUpdate update) {
-    final raw  = update.content as Map<String, dynamic>;
-    final type = raw['type'] as String?;
-    if (type == 'm.call.answer') {
-      _handleAnswer(raw['content']);
-    } else if (type == 'm.call.candidates') {
-      _handleCandidates(raw['content']);
-    } else if (type == 'm.call.hangup') {
-      onStatus('Call ended');
-      _peerConnection?.close();
-      _localStream?.dispose();
+    switch (update.type) {
+      case 'm.call.answer':
+        _handleAnswer(update.content as Map<String, dynamic>);
+        break;
+      case 'm.call.candidates':
+        _handleCandidates(update.content as Map<String, dynamic>);
+        break;
+      case 'm.call.hangup':
+        onStatus('Call ended');
+        _peerConnection?.close();
+        _localStream?.dispose();
+        break;
+      default:
+        break;
     }
   }
 
@@ -214,7 +214,7 @@ class CallService {
     final body = {
       'call_id': _callId,
       'party_id': _partyId,
-      'version': '1',
+      'version': 1,
       'candidates': [
         {
           'candidate': c.candidate,
@@ -232,42 +232,5 @@ class CallService {
     _matrixClient?.dispose();
     _peerConnection?.close();
     _localStream?.dispose();
-  }
-}
-
-extension CallServiceAnswer on CallService {
-  /// Принимает входящий звонок:
-  /// 1) устанавливает remoteDescription из offer,
-  /// 2) генерирует SDP-ответ и отправляет его в Matrix
-  Future<void> answerCall({
-    required String roomId,
-    required String callId,
-    required Map<String, dynamic> offer,
-  }) async {
-    // 1) Устанавливаем удалённое описание из приглашения
-    final sdp  = offer['sdp']  as String;
-    final type = offer['type'] as String;
-    await _peerConnection?.setRemoteDescription(RTCSessionDescription(sdp, type));
-
-    // 2) Создаём ответ
-    final answer = await _peerConnection!.createAnswer({'offerToReceiveAudio': 1});
-    await _peerConnection!.setLocalDescription(answer);
-
-    // ICE-кандидаты будут собираться в onIceCandidate и отправляться отдельно
-
-    // 3) Отправляем m.call.answer
-    final body = {
-      'call_id': callId,
-      'answer': {
-        'type': answer.type,
-        'sdp': answer.sdp,
-      },
-      'version': '1',
-      'party_id': _partyId,
-    };
-    final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-    await _matrixClient!.sendMessage(roomId, 'm.call.answer', txn, body);
-
-    onStatus('Call accepted');
   }
 }

@@ -1,4 +1,3 @@
-// lib/main.dart
 import 'package:flutter/material.dart';
 import 'routes/app_router.dart';
 import 'ui/login_page.dart';

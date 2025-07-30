@@ -3,133 +3,96 @@ import 'package:flutter/foundation.dart';
 import 'package:matrix/matrix.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
+import 'package:qalqan_dsm/services/auth_data.dart';
 import '../main.dart';
-import 'webrtc_helper.dart';
-import 'matrix_chat_service.dart';
 import 'package:flutter/material.dart';
 import '../ui/audio_call_page.dart';
 
+/// Сервис обработки звонков через Matrix и CallKit
 class MatrixCallService {
   final Client client;
+  final String currentUserId;
   StreamSubscription<Event>? _sub;
 
-  final Map<String, String> _pendingRoom  = {};
-  final Map<String, Map<String, dynamic>> _pendingOffer = {};
+  final Map<String, String> _pendingRooms = {};
+  final Map<String, Map<String, dynamic>> _pendingOffers = {};
 
-  MatrixCallService(this.client);
+  MatrixCallService(this.client, this.currentUserId);
 
   void start() {
     client.backgroundSync = true;
     client.sync();
     _sub = client.onTimelineEvent.stream
-        .where((e) => e.type.startsWith('m.call.'))
-        .listen(_onRoomEvent, onError: (e) => debugPrint('CallService err: $e'));
+        .where((e) => e.type == 'm.call.invite')
+        .listen(_onInvite, onError: (e) => debugPrint('CallService err: $e'));
   }
 
-  Future<void> _onRoomEvent(Event e) async {
-    final roomId  = e.room.id;
+  Future<void> _onInvite(Event e) async {
     final content = e.content as Map<String, dynamic>?;
     if (content == null) return;
 
-    switch (e.type) {
-      case 'm.call.invite':
-        final callId = content['call_id']  as String;
-        final party  = content['party_id'] as String? ?? 'Unknown';
-        final offer  = content['offer']    as Map<String, dynamic>;
+    final callId = content['call_id'] as String?;
+    if (callId == null) return;
 
-        _pendingRoom[callId]  = roomId;
-        _pendingOffer[callId] = offer;
-
-        await FlutterCallkitIncoming.showCallkitIncoming(
-          CallKitParams(
-            id:         callId,
-            nameCaller: party,
-            appName:    'QalqanDSM',
-            type:       0,
-            textAccept: 'Принять',
-            textDecline:'Отклонить',
-            extra:      {'call_id': callId},
-          ),
-        );
-        break;
-
-      case 'm.call.answer':
-      // TODO: при необходимости обрабатывать удалённый answer
-        break;
-
-      case 'm.call.candidates':
-      // TODO: при необходимости обрабатывать удалённые кандидаты
-        break;
-
-      case 'm.call.hangup':
-      // TODO: при необходимости обрабатывать сброс
-        break;
+    // Игнорируем наши собственные исходящие вызовы
+    if (AuthDataCall.instance.outgoingCallIds.remove(callId)) {
+      return;
     }
-  }
 
-  /// Вызывается из CallKit при нажатии «Принять»
-  void handleCallkitAccept(String callId) {
-    // 1) Логируем, что метод вызвался
-    debugPrint('[CallService] accept called with callId=$callId');
+    final offer = content['offer'] as Map<String, dynamic>?;
+    if (offer == null) return;
 
-    // 2) Достаём roomId и offer из pending
-    final roomId = _pendingRoom.remove(callId);
-    final offer  = _pendingOffer.remove(callId);
+    // Сохраняем roomId и offer для дальнейшего ответа
+    _pendingRooms[callId] = e.room.id;
+    _pendingOffers[callId] = offer;
 
-    debugPrint('[CallService] accept: callId=$callId -> roomId=$roomId');
+    // Определяем отображаемое имя вызывающего
+    final displayName = _extractLocalpart((e.sender as User).id);
 
-    // 3) Навигация обязательно из UI-потока
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      debugPrint('[CallService] navigating to AudioCallPage with roomId=$roomId');
-
-      if (roomId != null && offer != null) {
-        navigatorKey.currentState?.push(
-          MaterialPageRoute(
-            builder: (_) => AudioCallPage(
-              roomId:     roomId,
-              isIncoming: true,
-              offer:      offer,
-              callId:     callId,
-            ),
-          ),
-        );
-      }
-    });
-  }
-
-  Future<void> createCall({required String roomId}) async {
-    final offer  = await WebRtcHelper.createOffer();
-    final callId = UniqueKey().toString();
-
-    await client.sendMessage(
-      roomId,
-      'm.call.invite',
-      'txn_${DateTime.now().millisecondsSinceEpoch}',
-      {
-        'call_id':  callId,
-        'version':  1,
-        'party_id': MatrixService.userId ?? '',
-        'offer':    offer,
-      },
-    );
-
-    _pendingRoom[callId]  = roomId;
-    _pendingOffer[callId] = offer;
-
-    debugPrint('[CallService] invite: callId=$callId roomId=$roomId');
-
+    // Показываем нативное уведомление о входящем звонке
     await FlutterCallkitIncoming.showCallkitIncoming(
       CallKitParams(
-        id:         callId,
-        nameCaller: 'Me',
-        appName:    'QalqanDSM',
-        type:       0,
-        textAccept: 'Отклонить',
-        textDecline:'Завершить',
-        extra:      {'call_id': callId},
+        id: callId,
+        nameCaller: displayName,
+        appName: 'QalqanDSM',
+        type: 0,
+        textAccept: 'Принять',
+        textDecline: 'Отклонить',
+        extra: {'call_id': callId},
       ),
     );
   }
 
-  void dispose() => _sub?.cancel();
+  /// Отвечает на входящий звонок
+  void handleCallkitAccept(String callId) {
+    final roomId = _pendingRooms.remove(callId);
+    final offer = _pendingOffers.remove(callId);
+    if (roomId == null || offer == null) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (_) => AudioCallPage(
+            roomId: roomId,
+            isIncoming: true,
+            callId: callId,
+            offer: offer,
+          ),
+        ),
+      );
+    });
+  }
+
+  void dispose() {
+    _sub?.cancel();
+  }
+
+  /// Из "@user:server" возвращает "user"
+  String _extractLocalpart(String senderId) {
+    var userAndDomain = senderId.split(':').first;
+    if (userAndDomain.startsWith('@')) {
+      userAndDomain = userAndDomain.substring(1);
+    }
+    return userAndDomain;
+  }
 }

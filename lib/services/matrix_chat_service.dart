@@ -334,4 +334,42 @@ class MatrixService {
     }
     return all;
   }
+
+  /// Создаёт приватную комнату один-на-один с заданным юзером через HTTP API
+  static Future<Room?> createDirectChat(String userId) async {
+    if (_accessToken == null) return null;
+
+    // Формируем полный Matrix ID
+    final target = userId.startsWith('@')
+        ? userId
+        : '@$userId:${Uri.parse(_homeServerUrl).host}';
+
+    // Собираем URL с токеном
+    final uri = Uri.parse(
+        '$_homeServerUrl/_matrix/client/r0/createRoom?access_token=$_accessToken'
+    );
+
+    // Тело запроса
+    final payload = jsonEncode({
+      'invite': [target],
+      'is_direct': true,
+    });
+
+    // Выполняем POST
+    final response = await http.post(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+      body: payload,
+    );
+
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final roomId = data['room_id'] as String;
+      final displayName = target.split(':').first.replaceFirst('@', '');
+      return Room(id: roomId, name: displayName);
+    } else {
+      print('Direct chat creation failed ${response.statusCode}: ${response.body}');
+      return null;
+    }
+  }
 }

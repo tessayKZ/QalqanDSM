@@ -1,5 +1,3 @@
-// lib/services/webrtc_helper.dart
-
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class WebRtcHelper {
@@ -8,17 +6,14 @@ class WebRtcHelper {
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
       ],
-      // Unified Plan — по умолчанию
       'sdpSemantics': 'unified-plan',
     }, {});
 
-    // захватываем только аудио
     final localStream = await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
     });
 
-    // вместо addStream — для каждого трека вызов addTrack
     for (var track in localStream.getAudioTracks()) {
       await pc.addTrack(track, localStream);
     }
