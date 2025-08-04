@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/matrix_chat_service.dart';
@@ -55,9 +56,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     _pollTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       await MatrixService.forceSync();
       final newEvents = MatrixService.getRoomMessages(widget.room.id);
-      final unique = newEvents.where((e) => !_messages.any(
-            (m) => m.sender == e.sender && m.text == e.text && m.type == e.type,
-      )).toList();
+      final unique = newEvents.where((e) => !_messages.any((m) => m.id == e.id)).toList();
       if (unique.isNotEmpty) {
         setState(() {
           _messages.addAll(unique);
@@ -79,14 +78,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
-    setState(() {
-      _messages.add(Message(
-        sender: MatrixService.userId ?? '',
-        text: text,
-        type: MessageType.text,
-      ));
-      _messageController.clear();
-    });
+       _messageController.clear();
+       final serverEventId = await MatrixService.sendMessage(widget.room.id, text);
+       if (serverEventId == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
@@ -101,9 +95,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     await MatrixService.forceSync();
 
     final newEvents = MatrixService.getRoomMessages(widget.room.id);
-    final unique = newEvents.where((e) => !_messages.any(
-          (m) => m.sender == e.sender && m.text == e.text && m.type == e.type,
-    )).toList();
+    final unique = newEvents.where((e) => !_messages.any((m) => m.id == e.id)).toList();
     if (unique.isNotEmpty) {
       setState(() {
         _messages.addAll(unique);
@@ -248,6 +240,23 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   Widget _buildMessageBubble(Message msg, bool isMe) {
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final timeText = DateFormat('HH:mm, dd.MM.yyyy').format(msg.timestamp);
+
+    Widget header = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          msg.sender.split(':').first.replaceFirst('@', ''),
+          style: const TextStyle(fontSize: 12, color: Colors.black54),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          timeText,
+          style: const TextStyle(fontSize: 10, color: Colors.black45),
+        ),
+      ],
+    );
+
     if (msg.type == MessageType.text) {
       final bgColor = isMe ? Colors.blue.shade100 : Colors.grey.shade300;
       final radius = isMe
@@ -266,20 +275,19 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         child: Column(
           crossAxisAlignment: align,
           children: [
-            Text(
-              msg.sender.split(':').first.replaceFirst('@', ''),
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-            const SizedBox(height: 2),
+            header,                             // <-- имя + время
+            const SizedBox(height: 4),
             Container(
               decoration: BoxDecoration(
                 color: bgColor,
                 borderRadius: radius,
               ),
-              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+              padding: const EdgeInsets.symmetric(
+                  vertical: 8.0, horizontal: 12.0),
               child: Text(
                 msg.text,
-                style: const TextStyle(fontSize: 16, color: Colors.black87),
+                style: const TextStyle(
+                    fontSize: 16, color: Colors.black87),
               ),
             ),
           ],
@@ -287,24 +295,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       );
     } else if (msg.type == MessageType.call) {
       final bgColor = Colors.orange.shade100;
-      final radius = const BorderRadius.all(Radius.circular(12));
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
         child: Column(
           crossAxisAlignment: align,
           children: [
-            Text(
-              msg.sender.split(':').first.replaceFirst('@', ''),
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-            const SizedBox(height: 2),
+            header,
+            const SizedBox(height: 4),
             Container(
               decoration: BoxDecoration(
                 color: bgColor,
-                borderRadius: radius,
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.orange),
               ),
-              padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+              padding: const EdgeInsets.symmetric(
+                  vertical: 8.0, horizontal: 12.0),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -312,7 +317,8 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   const SizedBox(width: 6),
                   Text(
                     msg.text,
-                    style: const TextStyle(fontSize: 16, color: Colors.black87),
+                    style: const TextStyle(
+                        fontSize: 16, color: Colors.black87),
                   ),
                 ],
               ),

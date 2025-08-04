@@ -81,9 +81,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
         _stopwatch.stop();
         _finalDuration = _stopwatch.elapsed;
         _timer?.cancel();
-        setState(() {
-          _callEnded = true;
-        });
+        _callEnded = true;
       }
       setState(() {
         _status = 'Call ended';
@@ -125,7 +123,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
               objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
             ),
           ),
-
           Column(
             children: [
               Expanded(
@@ -138,15 +135,15 @@ class _AudioCallPageState extends State<AudioCallPage> {
                         backgroundImage: AssetImage('assets/avatar.jpg'),
                       ),
                       const SizedBox(height: 24),
-                      const Text(
-                        'user',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 28,
-                          fontWeight: FontWeight.w600,
+                      Text(
+                        _status,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 18,
                         ),
                       ),
                       const SizedBox(height: 8),
+
                       if (_stopwatch.isRunning && !_callEnded) ...[
                         const Text(
                           'Connected',
@@ -180,6 +177,16 @@ class _AudioCallPageState extends State<AudioCallPage> {
                           ),
                         ),
                       ],
+
+                      const SizedBox(height: 16),
+                      const Text(
+                        'user',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -268,8 +275,10 @@ class _ActionButton extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        Text(label,
-            style: const TextStyle(color: Colors.black87, fontSize: 14)),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.black87, fontSize: 14),
+        ),
       ],
     );
   }

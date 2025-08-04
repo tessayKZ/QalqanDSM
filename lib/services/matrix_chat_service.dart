@@ -148,93 +148,62 @@ class MatrixService {
     final roomSection = resp['rooms']?['join']?[roomId] as Map<String, dynamic>?;
     if (roomSection == null) return [];
 
-    final timelineEvents = roomSection['timeline']?['events'] as List<dynamic>?;
-    if (timelineEvents == null) return [];
+    final events = (roomSection['timeline']?['events'] as List?)
+        ?.cast<Map<String, dynamic>>() ?? [];
+
+    // Сортируем по серверному времени
+    events.sort((a, b) =>
+        (a['origin_server_ts'] as int)
+            .compareTo(b['origin_server_ts'] as int)
+    );
 
     final List<Message> result = [];
 
-    bool sawInvite = false;
-    bool sawAnswer = false;
-    bool sawHangup = false;
+    for (var e in events) {
+      final type = e['type'] as String? ?? '';
+      final sender = e['sender'] as String? ?? '';
+      final eventId = e['event_id'] as String? ?? '';
+      final ts = DateTime.fromMillisecondsSinceEpoch(
+        e['origin_server_ts'] as int? ?? 0,
+        isUtc: true,
+      ).toLocal();
 
-    for (var e in timelineEvents) {
-      final event = e as Map<String, dynamic>;
-      final type = event['type'] as String? ?? '';
-      if (type == 'm.call.invite') sawInvite = true;
-      if (type == 'm.call.answer') sawAnswer = true;
-      if (type == 'm.call.hangup') sawHangup = true;
-    }
-
-    final bool missedCall = sawInvite && sawHangup && !sawAnswer;
-    if (missedCall) {
-      Map<String, dynamic>? inviteEvent;
-      for (var e in timelineEvents) {
-        final ev = e as Map<String, dynamic>;
-        if ((ev['type'] as String? ?? '') == 'm.call.invite') {
-          inviteEvent = ev;
-          break;
-        }
-      }
-      if (inviteEvent != null) {
-        final sender = inviteEvent['sender'] as String? ?? '';
+      if (type.startsWith('m.room.message')) {
+        final body = (e['content'] as Map<String, dynamic>)['body'] as String? ?? '';
         result.add(Message(
-          sender: sender,
-          text: '📞 Пропущенный звонок',
-          type: MessageType.call,
+          id:        eventId,
+          sender:    sender,
+          text:      body,
+          type:      MessageType.text,
+          timestamp: ts,
         ));
       }
-    }
 
-    for (var e in timelineEvents) {
-      final event = e as Map<String, dynamic>;
-      final eventType = event['type'] as String? ?? '';
-      if (eventType.startsWith('m.room.message')) {
-        final sender = event['sender'] as String? ?? '';
-        final content = event['content'] as Map<String, dynamic>?;
-        final body = content?['body'] as String? ?? '';
+      if (type.startsWith('m.call.') && type != 'm.call.candidates') {
+        String callText;
+        if (type == 'm.call.invite')      callText = '📞 Звонок: приглашение';
+        else if (type == 'm.call.answer') callText = '📞 Звонок: ответ';
+        else if (type == 'm.call.hangup') callText = '📞 Звонок завершён';
+        else                               callText = '📞 Событие звонка ($type)';
+
         result.add(Message(
-          sender: sender,
-          text: body,
-          type: MessageType.text,
+          id:        eventId,
+          sender:    sender,
+          text:      callText,
+          type:      MessageType.call,
+          timestamp: ts,
         ));
-      }
-    }
-
-    if (!missedCall) {
-      for (var e in timelineEvents) {
-        final event = e as Map<String, dynamic>;
-        final eventType = event['type'] as String? ?? '';
-
-        if (eventType.startsWith('m.call.')) {
-          if (eventType == 'm.call.candidates') continue;
-
-          final sender = event['sender'] as String? ?? '';
-          String callText;
-
-          if (eventType == 'm.call.invite') {
-            callText = '📞 Звонок: приглашение';
-          } else if (eventType == 'm.call.answer') {
-            callText = '📞 Звонок: ответ';
-          } else if (eventType == 'm.call.hangup') {
-            callText = '📞 Звонок завершён';
-          } else {
-            callText = '📞 Событие звонка ($eventType)';
-          }
-
-          result.add(Message(
-            sender: sender,
-            text: callText,
-            type: MessageType.call,
-          ));
-        }
       }
     }
 
     return result;
   }
 
-  static Future<void> sendMessage(String roomId, String text) async {
-    if (_accessToken == null) return;
+  // matrix_chat_service.dart
+
+  static Future<String?> sendMessage(String roomId, String text) async {
+    if (_accessToken == null) return null;
+
     final txnId = DateTime.now().millisecondsSinceEpoch.toString();
     final uri = Uri.parse(
       '$_homeServerUrl/_matrix/client/r0/rooms/$roomId/send/m.room.message/$txnId',
@@ -253,10 +222,15 @@ class MatrixService {
       body: payload,
     );
 
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      print('sendMessage failed ${response.statusCode}: ${response.body}');
-    } else {
+    if (response.statusCode == 200 || response.statusCode == 201) {
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final eventId = data['event_id'] as String?;
+      // сразу подтягиваем изменения (чтобы _lastSyncResponse содержал ваше новое сообщение)
       await _doSync();
+      return eventId;
+    } else {
+      print('sendMessage failed ${response.statusCode}: ${response.body}');
+      return null;
     }
   }
 
@@ -300,23 +274,34 @@ class MatrixService {
 
     Message? convert(Map<String, dynamic> e) {
       final type = e['type'] as String? ?? '';
+      final eventId = e['event_id'] as String? ?? '';
+      final ts = DateTime.fromMillisecondsSinceEpoch(
+        e['origin_server_ts'] as int? ?? 0,
+        isUtc: true,
+      ).toLocal();
+
       if (type.startsWith('m.room.message')) {
         return Message(
-          sender: e['sender'] as String? ?? '',
-          text: (e['content'] as Map)['body'] as String? ?? '',
-          type: MessageType.text,
+          id:        eventId,
+          sender:    e['sender'] as String? ?? '',
+          text:      (e['content'] as Map)['body'] as String? ?? '',
+          type:      MessageType.text,
+          timestamp: ts,
         );
       }
       if (type.startsWith('m.call.') && type != 'm.call.candidates') {
         String txt;
-        if (type == 'm.call.invite') txt = '📞 Звонок приглашение';
+        if (type == 'm.call.invite')    txt = '📞 Звонок приглашение';
         else if (type == 'm.call.answer') txt = '📞 Звонок ответ';
         else if (type == 'm.call.hangup') txt = '📞 Звонок завершён';
-        else txt = '📞 Событие звонка';
+        else                              txt = '📞 Событие звонка';
+
         return Message(
-          sender: e['sender'] as String? ?? '',
-          text: txt,
-          type: MessageType.call,
+          id:        eventId,
+          sender:    e['sender'] as String? ?? '',
+          text:      txt,
+          type:      MessageType.call,
+          timestamp: ts,
         );
       }
       return null;
@@ -335,27 +320,32 @@ class MatrixService {
     return all;
   }
 
-  /// Создаёт приватную комнату один-на-один с заданным юзером через HTTP API
   static Future<Room?> createDirectChat(String userId) async {
     if (_accessToken == null) return null;
 
-    // Формируем полный Matrix ID
     final target = userId.startsWith('@')
         ? userId
         : '@$userId:${Uri.parse(_homeServerUrl).host}';
-
-    // Собираем URL с токеном
     final uri = Uri.parse(
         '$_homeServerUrl/_matrix/client/r0/createRoom?access_token=$_accessToken'
     );
 
-    // Тело запроса
     final payload = jsonEncode({
-      'invite': [target],
-      'is_direct': true,
+      'invite':     [target],
+      'is_direct':  true,
+      'visibility': 'private',
+      'preset':     'trusted_private_chat',
+      'initial_state': [
+        {
+          'type': 'm.room.encryption',
+          'state_key': '',
+          'content': {
+            'algorithm': 'm.megolm.v1.aes-sha2'
+          }
+        }
+      ]
     });
 
-    // Выполняем POST
     final response = await http.post(
       uri,
       headers: {'Content-Type': 'application/json'},

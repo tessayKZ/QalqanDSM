@@ -67,7 +67,6 @@ class CallService {
       return;
     }
 
-    onStatus('Initializing Matrix client...');
     if (_matrixClient != null) {
       await _matrixClient!.logout().catchError((_) {});
       _matrixClient!.dispose();
