@@ -151,7 +151,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   Navigator.pop(context);
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => OutgoingAudioCallPage(roomId: widget.room.id, displayName: widget.room.name),
+                      builder: (_) => OutgoingAudioCallPage(roomId: widget.room.id, initialName: widget.room.name),
                     ),
                   );
                 },

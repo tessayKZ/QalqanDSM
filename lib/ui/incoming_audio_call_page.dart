@@ -61,12 +61,8 @@ class _AudioCallPageState extends State<AudioCallPage> {
   }
 
   void _updateStatus(String status) {
-    if ((status == 'Connection established' || status == 'Connected') &&
+    if ((status == 'Connected' || status == 'Connection established') &&
         !_stopwatch.isRunning) {
-      setState(() {
-        _status = 'Connected';
-        _callEnded = false;
-      });
       _stopwatch.start();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         setState(() {
@@ -84,11 +80,9 @@ class _AudioCallPageState extends State<AudioCallPage> {
         _callEnded = true;
       }
       setState(() {
-        _status = 'Call ended';
       });
       return;
     }
-
     setState(() {
       _status = status;
     });

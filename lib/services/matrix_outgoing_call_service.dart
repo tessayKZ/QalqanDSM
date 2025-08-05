@@ -7,8 +7,8 @@ import '../services/auth_data.dart';
 import '../services/matrix_auth.dart';
 
 class CallService {
-  final void Function(String status) onStatus;
-  final void Function(MediaStream stream) onAddRemoteStream;
+    final void Function(String status) onStatus;
+    final void Function(MediaStream stream) onAddRemoteStream;
 
   Client? _matrixClient;
   String? _loggedInUserId;

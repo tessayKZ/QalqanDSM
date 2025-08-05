@@ -5,8 +5,8 @@ import '../services/matrix_outgoing_call_service.dart';
 
 class OutgoingAudioCallPage extends StatefulWidget {
   final String roomId;
-  final String displayName;
-  const OutgoingAudioCallPage({Key? key, required this.roomId, required this.displayName}) : super(key: key);
+  final String initialName;
+  const OutgoingAudioCallPage({Key? key, required this.roomId, required this.initialName,}) : super(key: key);
 
   @override
   State<OutgoingAudioCallPage> createState() => _OutgoingAudioCallPageState();
@@ -15,6 +15,7 @@ class OutgoingAudioCallPage extends StatefulWidget {
 class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   late final CallService _callService;
 
+  String _calleeName = '';
   bool _muted = false;
   bool _speakerOn = false;
   String _status = 'Connecting...';
@@ -41,7 +42,8 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   }
 
   void _updateStatus(String status) {
-    if (status == 'Connection established' && !_stopwatch.isRunning) {
+    if ((status == 'Connected' || status == 'Connection established')
+        && !_stopwatch.isRunning) {
       _stopwatch.start();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
         setState(() {
@@ -49,10 +51,24 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
         });
       });
     }
+    else if (status == 'Call ended') {
+      _timer?.cancel();
+      _stopwatch.stop();
+
+      final finalTime = _formatDuration(_stopwatch.elapsed);
+
+      setState(() {
+        _status = 'Call duration: $finalTime';
+      });
+      return;
+    }
+
     setState(() {
       _status = status;
     });
   }
+
+
 
   @override
   void dispose() {
@@ -108,7 +124,7 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
                       ),
                       const SizedBox(height: 24),
                       Text(
-                        widget.displayName,
+                        widget.initialName,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
