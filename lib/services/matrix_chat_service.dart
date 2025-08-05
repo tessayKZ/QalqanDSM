@@ -151,7 +151,6 @@ class MatrixService {
     final events = (roomSection['timeline']?['events'] as List?)
         ?.cast<Map<String, dynamic>>() ?? [];
 
-    // Сортируем по серверному времени
     events.sort((a, b) =>
         (a['origin_server_ts'] as int)
             .compareTo(b['origin_server_ts'] as int)
@@ -199,8 +198,6 @@ class MatrixService {
     return result;
   }
 
-  // matrix_chat_service.dart
-
   static Future<String?> sendMessage(String roomId, String text) async {
     if (_accessToken == null) return null;
 
@@ -225,7 +222,7 @@ class MatrixService {
     if (response.statusCode == 200 || response.statusCode == 201) {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final eventId = data['event_id'] as String?;
-      // сразу подтягиваем изменения (чтобы _lastSyncResponse содержал ваше новое сообщение)
+
       await _doSync();
       return eventId;
     } else {

@@ -46,10 +46,8 @@ class CallService {
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
 
-  /// чтобы можно было удобно отправлять ответ
   Client get matrixClient => _matrixClient!;
 
-  /// доступ к локальному потоку из UI (для mute/unmute)
   MediaStream? get localStream => _localStream;
 
   CallService({
@@ -109,7 +107,7 @@ class CallService {
         'iceServers': [
           {'urls': 'stun:stun.l.google.com:19302'},
           {
-            'urls': 'turn:your.turn.server:3478',
+            'urls': 'turn:webqalqan.com:3478',
             'username': 'turnuser',
             'credential': 'turnpass',
           }
@@ -139,7 +137,7 @@ class CallService {
 
       _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
         if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
-          // когда ICE-сборка закончилась, отправляем "пустой" пакет кандидатов
+
           final body = {
             'call_id': _callId,
             'party_id': _partyId,
@@ -175,7 +173,6 @@ class CallService {
   void _handleEvent(EventUpdate update) {
     switch (update.type) {
       case 'm.call.answer':
-      // content — сразу тело answer
         _handleAnswer(update.content as Map<String, dynamic>);
         break;
       case 'm.call.candidates':
@@ -247,7 +244,6 @@ class CallService {
   String? _sinceToken;
 
     void startSyncLoop() {
-        // Слушаем все события m.call.* и разбираем внутри _handleEvent
         _matrixClient!.onEvent.stream
                .listen(_handleEvent, onError: (err) => onStatus('Sync error: $err'));
         _runSyncLoop();
@@ -353,7 +349,6 @@ extension CallServiceAnswer on CallService {
                 }
               ],
             };
-            // используем локальную переменную, а не matrixClient
             await localClient.sendMessage(
               localRoomId,
               'm.call.candidates',
@@ -364,7 +359,6 @@ extension CallServiceAnswer on CallService {
 
     _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
-        // когда ICE-сборка закончилась, отсылаем «пустой» пакет кандидатов
         final body = {
           'call_id': callId,
           'party_id': _partyId,
@@ -376,7 +370,6 @@ extension CallServiceAnswer on CallService {
       }
     };
 
-// дальше — установка удалённого SDP и создание ответа:
     onStatus('Setting remote SDP...');
     await _peerConnection!.setRemoteDescription(
       RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
@@ -386,7 +379,6 @@ extension CallServiceAnswer on CallService {
     final answer = await _peerConnection!.createAnswer({'offerToReceiveAudio': 1});
     await _peerConnection!.setLocalDescription(answer);
 
-// отправляем answer сразу же
     final localDesc = await _peerConnection!.getLocalDescription();
     if (localDesc != null) {
       final ansBody = {

@@ -6,9 +6,8 @@ import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
 import '../main.dart';
 import 'package:flutter/material.dart';
-import '../ui/audio_call_page.dart';
+import '../ui/incoming_audio_call_page.dart';
 
-/// Сервис обработки звонков через Matrix и CallKit
 class MatrixCallService {
   final Client client;
   final String currentUserId;
@@ -34,7 +33,6 @@ class MatrixCallService {
     final callId = content['call_id'] as String?;
     if (callId == null) return;
 
-    // Игнорируем наши собственные исходящие вызовы
     if (AuthDataCall.instance.outgoingCallIds.remove(callId)) {
       return;
     }
@@ -42,28 +40,24 @@ class MatrixCallService {
     final offer = content['offer'] as Map<String, dynamic>?;
     if (offer == null) return;
 
-    // Сохраняем roomId и offer для дальнейшего ответа
     _pendingRooms[callId] = e.room.id;
     _pendingOffers[callId] = offer;
 
-    // Определяем отображаемое имя вызывающего
     final displayName = _extractLocalpart((e.sender as User).id);
 
-    // Показываем нативное уведомление о входящем звонке
     await FlutterCallkitIncoming.showCallkitIncoming(
       CallKitParams(
         id: callId,
         nameCaller: displayName,
         appName: 'QalqanDSM',
         type: 0,
-        textAccept: 'Принять',
-        textDecline: 'Отклонить',
+        textAccept: 'Accept',
+        textDecline: 'Decline',
         extra: {'call_id': callId},
       ),
     );
   }
 
-  /// Отвечает на входящий звонок
   void handleCallkitAccept(String callId) {
     final roomId = _pendingRooms.remove(callId);
     final offer = _pendingOffers.remove(callId);
@@ -87,7 +81,6 @@ class MatrixCallService {
     _sub?.cancel();
   }
 
-  /// Из "@user:server" возвращает "user"
   String _extractLocalpart(String senderId) {
     var userAndDomain = senderId.split(':').first;
     if (userAndDomain.startsWith('@')) {

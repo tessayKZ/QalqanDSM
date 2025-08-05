@@ -1,11 +1,11 @@
 import 'package:matrix/matrix.dart';
+import 'package:flutter/foundation.dart';
+import 'package:matrix/matrix.dart';
 
-/// Сервис аутентификации и хранения единственного клиента
 class AuthService {
   static Client? client;
   static String? userId;
 
-  /// Логин и инициализация клиента
   static Future<bool> login({
     required String user,
     required String password,
@@ -23,7 +23,8 @@ class AuthService {
       userId = res.userId;
       client!.sync().catchError((_) {});
       return true;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('AuthService.login error: $e\n$st');
       return false;
     }
   }

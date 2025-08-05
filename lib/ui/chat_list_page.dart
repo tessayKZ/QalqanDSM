@@ -5,7 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/call_event.dart';
 import '../services/matrix_auth.dart';
-import '../services/matrix_call_service.dart';
+import '../services/matrix_incoming_call_service.dart';
 import '../services/matrix_chat_service.dart';
 import '../models/room.dart';
 import 'chat_detail_page.dart';
@@ -35,17 +35,14 @@ class _ChatListPageState extends State<ChatListPage> {
     _callSvc.start();
     _listenCallEvents();
 
-    // Initial load with spinner
     _initialLoad();
 
-    // Silent refresh every 5 seconds
     _timer = Timer.periodic(
       const Duration(seconds: 5),
           (_) => _silentRefresh(),
     );
   }
 
-  // Initial full load showing loading indicator
   Future<void> _initialLoad() async {
     setState(() => _loading = true);
     await MatrixService.syncOnce();
@@ -54,7 +51,6 @@ class _ChatListPageState extends State<ChatListPage> {
     setState(() => _loading = false);
   }
 
-  // Silent refresh without showing indicator
   Future<void> _silentRefresh() async {
     await MatrixService.syncOnce();
     final updated = MatrixService.getJoinedRooms();
@@ -64,7 +60,6 @@ class _ChatListPageState extends State<ChatListPage> {
     });
   }
 
-  // Manual pull-to-refresh
   Future<void> _onRefresh() async {
     await _silentRefresh();
   }

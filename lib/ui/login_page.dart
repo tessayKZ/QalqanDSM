@@ -59,7 +59,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       _errorText = null;
     });
 
-    // Perform both SDK and HTTP logins
     final sdkOk = await AuthService.login(user: user, password: password);
     final chatOk = await MatrixService.login(user: user, password: password);
 
@@ -68,11 +67,9 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     });
 
     if (sdkOk && chatOk) {
-      // Save credentials for call service
       AuthDataCall.instance.login = user;
       AuthDataCall.instance.password = password;
 
-      // Navigate to chat list
       navigatorKey.currentState?.pushReplacement(
         MaterialPageRoute(builder: (_) => ChatListPage()),
       );
@@ -89,7 +86,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     return Scaffold(
       body: Stack(
         children: [
-          // Gradient background
           Container(
             decoration: const BoxDecoration(
               gradient: LinearGradient(
@@ -99,7 +95,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
               ),
             ),
           ),
-          // Blurred circles accent
           Positioned(
             top: -size.width * 0.3,
             left: -size.width * 0.2,
@@ -124,7 +119,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
               ),
             ),
           ),
-          // Form card
           Center(
             child: FadeTransition(
               opacity: _fadeAnimation,
@@ -141,7 +135,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        // Logo
                         Image.asset(
                           'assets/logo.png',
                           width: 80,
@@ -156,7 +149,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                               ?.copyWith(color: Colors.black87),
                         ),
                         const SizedBox(height: 24),
-                        // Username field
                         TextField(
                           controller: _userController,
                           decoration: InputDecoration(
@@ -171,7 +163,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           ),
                         ),
                         const SizedBox(height: 16),
-                        // Password field
                         TextField(
                           controller: _passwordController,
                           obscureText: true,
@@ -197,7 +188,6 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           ),
                         ],
                         const SizedBox(height: 24),
-                        // Login button
                         SizedBox(
                           width: double.infinity,
                           height: 50,

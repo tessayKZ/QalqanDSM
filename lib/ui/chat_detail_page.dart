@@ -4,9 +4,10 @@ import 'package:intl/intl.dart';
 import '../models/message.dart';
 import '../models/room.dart';
 import '../services/matrix_chat_service.dart';
-import '../services/matrix_call_service.dart';
+import '../services/matrix_incoming_call_service.dart';
 import '../services/matrix_auth.dart';
-import '../ui/audio_call_page.dart';
+import '../ui/incoming_audio_call_page.dart';
+import '../ui/outgoing_audio_call_page.dart';
 
 class ChatDetailPage extends StatefulWidget {
   final Room room;
@@ -150,10 +151,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                   Navigator.pop(context);
                   Navigator.of(context).push(
                     MaterialPageRoute(
-                      builder: (_) => AudioCallPage(
-                        roomId:    widget.room.id,
-                        isIncoming: false,
-                      ),
+                      builder: (_) => OutgoingAudioCallPage(roomId: widget.room.id, displayName: widget.room.name),
                     ),
                   );
                 },
@@ -275,7 +273,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         child: Column(
           crossAxisAlignment: align,
           children: [
-            header,                             // <-- имя + время
+            header,
             const SizedBox(height: 4),
             Container(
               decoration: BoxDecoration(
