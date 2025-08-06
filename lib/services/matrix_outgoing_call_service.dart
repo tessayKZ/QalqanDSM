@@ -14,6 +14,7 @@ class CallService {
   String? _loggedInUserId;
   String? _callId;
   String? _partyId;
+  String? _roomId;
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
@@ -26,6 +27,7 @@ class CallService {
   });
 
   Future<void> startCall({ required String roomId }) async {
+    _roomId = roomId;
     onStatus('Requesting microphone…');
     if (!await Permission.microphone.request().isGranted) {
       onStatus('Microphone denied');
@@ -185,6 +187,19 @@ class CallService {
     final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
     await _matrixClient!.sendMessage(roomId, 'm.call.candidates', txn, body);
   }
+
+    Future<void> hangup() async {
+      if (_matrixClient != null && _callId != null && _roomId != null) {
+        final body = {'call_id': _callId, 'version': '1'};
+        final txn  = 'txn_${DateTime.now().millisecondsSinceEpoch}';
+        await _matrixClient!.sendMessage(
+            _roomId!, 'm.call.hangup', txn, body
+        );
+      }
+      onStatus('Call ended');
+      _peerConnection?.close();
+      _localStream?.dispose();
+    }
 
   Future<void> dispose() async {
     await _matrixClient?.logout().catchError((_) {});

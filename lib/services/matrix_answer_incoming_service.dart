@@ -37,6 +37,7 @@ Future<AppConfig> loadConfig() async {
 }
 
 class CallService {
+  String? _roomId;
   final void Function(String status) onStatus;
   final void Function(MediaStream stream) onAddRemoteStream;
 
@@ -56,7 +57,7 @@ class CallService {
   });
 
   Future<void> startCall({ required String roomId }) async {
-    onStatus('Loading config...');
+    _roomId = roomId;
     late AppConfig config;
     try {
       config = await loadConfig();
@@ -171,22 +172,25 @@ class CallService {
   }
 
   void _handleEvent(EventUpdate update) {
-    switch (update.type) {
-      case 'm.call.answer':
-        _handleAnswer(update.content as Map<String, dynamic>);
-        break;
-      case 'm.call.candidates':
-        _handleCandidates(update.content as Map<String, dynamic>);
-        break;
-      case 'm.call.hangup':
+    try {
+      final raw = update.content as Map<String, dynamic>;
+      final String? type = raw['type'] as String?;
+      final dynamic content = raw['content'];
+
+      if (type == 'm.call.answer') {
+        _handleAnswer(content);
+      } else if (type == 'm.call.candidates') {
+        _handleCandidates(content);
+      } else if (type == 'm.call.hangup') {
         onStatus('Call ended');
         _peerConnection?.close();
         _localStream?.dispose();
-        break;
-      default:
-        break;
+      }
+    } catch (e) {
+      debugPrint('Error handling event: $e');
     }
   }
+
 
   Future<void> _handleAnswer(dynamic content) async {
     final data = content as Map<String, dynamic>?;
@@ -264,12 +268,27 @@ class CallService {
     }
   }
 
+  Future<void> hangup() async {
+    if (_matrixClient != null && _callId != null && _roomId != null) {
+      final body = {'call_id': _callId, 'version': '1'};
+      final txn  = 'txn_${DateTime.now().millisecondsSinceEpoch}';
+      await _matrixClient!.sendMessage(
+          _roomId!, 'm.call.hangup', txn, body
+      );
+    }
+    onStatus('Call ended');
+    _peerConnection?.close();
+    _localStream?.dispose();
+  }
+
   Future<void> dispose() async {
     _disposed = true;
     if (_matrixClient != null) {
       await _matrixClient!.logout().catchError((_) {});
       _matrixClient!.dispose();
       _matrixClient = null;
+      _peerConnection?.close();
+      _localStream?.dispose();
     }
   }
 }

@@ -162,7 +162,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 title: const Text('Video call'),
                 onTap: () {
                   Navigator.pop(context);
-                  // function start Video call
+                  // function start Video call soon realize
                 },
               ),
               ListTile(

@@ -11,20 +11,23 @@ import '../ui/incoming_audio_call_page.dart';
 class MatrixCallService {
   final Client client;
   final String currentUserId;
-  StreamSubscription<Event>? _sub;
+  StreamSubscription<Event>? _subInvite;
+  StreamSubscription<Event>? _subHangup;
 
   final Map<String, String> _pendingRooms = {};
   final Map<String, Map<String, dynamic>> _pendingOffers = {};
+  final Map<String, String> _pendingCallerNames = {};
 
   MatrixCallService(this.client, this.currentUserId);
 
   void start() {
     client.backgroundSync = true;
     client.sync();
-    _sub = client.onTimelineEvent.stream
+    _subInvite = client.onTimelineEvent.stream
         .where((e) => e.type == 'm.call.invite')
         .listen(_onInvite, onError: (e) => debugPrint('CallService err: $e'));
   }
+
 
   Future<void> _onInvite(Event e) async {
     final content = e.content as Map<String, dynamic>?;
@@ -40,10 +43,11 @@ class MatrixCallService {
     final offer = content['offer'] as Map<String, dynamic>?;
     if (offer == null) return;
 
+    final displayName = _extractLocalpart((e.sender as User).id);
+
     _pendingRooms[callId] = e.room.id;
     _pendingOffers[callId] = offer;
-
-    final displayName = _extractLocalpart((e.sender as User).id);
+    _pendingCallerNames[callId] = displayName;
 
     await FlutterCallkitIncoming.showCallkitIncoming(
       CallKitParams(
@@ -61,6 +65,7 @@ class MatrixCallService {
   void handleCallkitAccept(String callId) {
     final roomId = _pendingRooms.remove(callId);
     final offer = _pendingOffers.remove(callId);
+    final callerName = _pendingCallerNames.remove(callId) ?? 'Unknown';
     if (roomId == null || offer == null) return;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -71,14 +76,16 @@ class MatrixCallService {
             isIncoming: true,
             callId: callId,
             offer: offer,
+            callerName: callerName,
           ),
         ),
       );
     });
   }
 
-  void dispose() {
-    _sub?.cancel();
+    void dispose() {
+        _subInvite?.cancel();
+        _subHangup?.cancel();
   }
 
   String _extractLocalpart(String senderId) {

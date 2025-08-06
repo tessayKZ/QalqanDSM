@@ -1,14 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import '../services/matrix_answer_incoming_service.dart';
 import '../services/webrtc_helper.dart';
+import '../services/matrix_answer_incoming_service.dart';
 
 class AudioCallPage extends StatefulWidget {
   final String roomId;
   final bool isIncoming;
   final String? callId;
   final Map<String, dynamic>? offer;
+  final String callerName;
 
   const AudioCallPage({
     Key? key,
@@ -16,6 +17,7 @@ class AudioCallPage extends StatefulWidget {
     this.isIncoming = false,
     this.callId,
     this.offer,
+    required this.callerName,
   }) : super(key: key);
 
   @override
@@ -30,7 +32,6 @@ class _AudioCallPageState extends State<AudioCallPage> {
 
   final Stopwatch _stopwatch = Stopwatch();
   Timer? _timer;
-  Duration _callDuration = Duration.zero;
 
   bool _callEnded = false;
   Duration _finalDuration = Duration.zero;
@@ -58,31 +59,24 @@ class _AudioCallPageState extends State<AudioCallPage> {
     } else {
       _callService.startCall(roomId: widget.roomId);
     }
+    Helper.setSpeakerphoneOn(_speakerOn);
   }
 
   void _updateStatus(String status) {
-    if ((status == 'Connected' || status == 'Connection established') &&
-        !_stopwatch.isRunning) {
+    if ((status == 'Connected' || status == 'Connection established') && !_stopwatch.isRunning) {
       _stopwatch.start();
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        setState(() {
-          _callDuration = _stopwatch.elapsed;
-        });
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+      return;
+    }
+
+    if (status=='Call ended' || status=='Disconnected') {
+      setState(() => _callEnded=true);
+      Future.delayed(const Duration(seconds:2), (){
+        if (mounted) Navigator.of(context).pop();
       });
       return;
     }
 
-    if (status == 'Call ended' || status == 'Disconnected') {
-      if (_stopwatch.isRunning) {
-        _stopwatch.stop();
-        _finalDuration = _stopwatch.elapsed;
-        _timer?.cancel();
-        _callEnded = true;
-      }
-      setState(() {
-      });
-      return;
-    }
     setState(() {
       _status = status;
     });
@@ -129,32 +123,8 @@ class _AudioCallPageState extends State<AudioCallPage> {
                         backgroundImage: AssetImage('assets/avatar.jpg'),
                       ),
                       const SizedBox(height: 24),
-                      Text(
-                        _status,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 18,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
 
-                      if (_stopwatch.isRunning && !_callEnded) ...[
-                        const Text(
-                          'Connected',
-                          style: TextStyle(
-                            color: Colors.greenAccent,
-                            fontSize: 16,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _formatDuration(_callDuration),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 18,
-                          ),
-                        ),
-                      ] else if (_callEnded) ...[
+                      if (_callEnded) ...[
                         const Text(
                           'Call ended',
                           style: TextStyle(
@@ -170,12 +140,27 @@ class _AudioCallPageState extends State<AudioCallPage> {
                             fontSize: 18,
                           ),
                         ),
+                      ] else if (_stopwatch.isRunning) ...[
+                        Text(
+                          _formatDuration(_stopwatch.elapsed),
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ] else ...[
+                        Text(
+                          _status,
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 18,
+                          ),
+                        ),
                       ],
-
                       const SizedBox(height: 16),
-                      const Text(
-                        'user',
-                        style: TextStyle(
+                      Text(
+                        widget.callerName,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
                           fontWeight: FontWeight.w600,
@@ -202,11 +187,11 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       icon: _muted ? Icons.mic_off : Icons.mic,
                       label: _muted ? 'Unmute' : 'Mute',
                       color: _muted ? Colors.redAccent : Colors.grey,
-                      onTap: () {
+                      onTap: () async {
                         setState(() => _muted = !_muted);
-                        _callService.localStream
-                            ?.getAudioTracks()
-                            .forEach((t) => t.enabled = !_muted);
+                        for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+                          await Helper.setMicrophoneMute(_muted, track);
+                        }
                       },
                     ),
                     _ActionButton(
@@ -214,8 +199,7 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       label: 'End',
                       color: Colors.redAccent,
                       onTap: () {
-                        _callService.dispose();
-                        Navigator.of(context).pop();
+                        _callService.hangup();
                       },
                     ),
                     _ActionButton(

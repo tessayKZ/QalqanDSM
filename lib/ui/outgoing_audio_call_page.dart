@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import '../services/webrtc_helper.dart';
 import '../services/matrix_outgoing_call_service.dart';
 
 class OutgoingAudioCallPage extends StatefulWidget {
@@ -15,14 +16,14 @@ class OutgoingAudioCallPage extends StatefulWidget {
 class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   late final CallService _callService;
 
-  String _calleeName = '';
   bool _muted = false;
   bool _speakerOn = false;
   String _status = 'Connecting...';
+  bool _callEnded = false;
+  Duration _finalDuration = Duration.zero;
 
   final Stopwatch _stopwatch = Stopwatch();
   Timer? _timer;
-  Duration _callDuration = Duration.zero;
 
   late final RTCVideoRenderer _remoteRenderer;
 
@@ -39,26 +40,28 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
     );
 
     _callService.startCall(roomId: widget.roomId);
+    Helper.setSpeakerphoneOn(_speakerOn);
   }
 
   void _updateStatus(String status) {
-    if ((status == 'Connected' || status == 'Connection established')
-        && !_stopwatch.isRunning) {
+    if ((status == 'Connected' || status == 'Connection established') && !_stopwatch.isRunning) {
       _stopwatch.start();
-      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-        setState(() {
-          _callDuration = _stopwatch.elapsed;
-        });
-      });
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
+      return;
     }
-    else if (status == 'Call ended') {
-      _timer?.cancel();
-      _stopwatch.stop();
 
-      final finalTime = _formatDuration(_stopwatch.elapsed);
-
+    if (status == 'Call ended' || status == 'Disconnected') {
+      if (_stopwatch.isRunning) {
+        _stopwatch.stop();
+        _finalDuration = _stopwatch.elapsed;
+        _timer?.cancel();
+      }
       setState(() {
-        _status = 'Call duration: $finalTime';
+        _callEnded = true;
+      });
+      Future.delayed(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        Navigator.of(context).pop();
       });
       return;
     }
@@ -67,8 +70,6 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
       _status = status;
     });
   }
-
-
 
   @override
   void dispose() {
@@ -123,22 +124,49 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
                         ),
                       ),
                       const SizedBox(height: 24),
+                      if (_callEnded) ...[
+                        const Text(
+                          'Call ended',
+                          style: TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 18,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _formatDuration(_finalDuration),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ]
+                      else if (_stopwatch.isRunning) ...[
+                        Text(
+                          _formatDuration(_stopwatch.elapsed),
+                          style: const TextStyle(
+                            color: Colors.greenAccent,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ]
+                      else ...[
+                          Text(
+                            _status,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ],
+
+                      const SizedBox(height: 16),
                       Text(
                         widget.initialName,
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 28,
                           fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _stopwatch.isRunning
-                            ? _formatDuration(_callDuration)
-                            : _status,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 18,
                         ),
                       ),
                     ],
@@ -162,20 +190,19 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
                       icon: _muted ? Icons.mic_off : Icons.mic,
                       label: _muted ? 'Unmute' : 'Mute',
                       color: _muted ? Colors.redAccent : Colors.grey,
-                      onTap: () {
+                      onTap: () async {
                         setState(() => _muted = !_muted);
-                        _callService.localStream
-                            ?.getAudioTracks()
-                            .forEach((t) => t.enabled = !_muted);
+                        for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+                          await Helper.setMicrophoneMute(_muted, track);
+                        }
                       },
                     ),
                     _ActionButton(
                       icon: Icons.call_end,
-                      label: 'Cancel',
+                      label: 'End',
                       color: Colors.redAccent,
                       onTap: () {
-                        _callService.dispose();
-                        Navigator.of(context).pop();
+                        _callService.hangup();
                       },
                     ),
                     _ActionButton(
