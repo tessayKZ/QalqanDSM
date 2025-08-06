@@ -8,6 +8,7 @@ import '../services/matrix_incoming_call_service.dart';
 import '../services/matrix_auth.dart';
 import '../ui/incoming_audio_call_page.dart';
 import '../ui/outgoing_audio_call_page.dart';
+import 'package:file_selector/file_selector.dart';
 
 class ChatDetailPage extends StatefulWidget {
   final Room room;
@@ -23,6 +24,15 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   List<Message> _messages = [];
   bool _isLoading = true;
   Timer? _pollTimer;
+
+  Future<void> _attachFile() async {
+  final typeGroup = XTypeGroup(label: 'all', extensions: ['*']);
+  final XFile? file = await openFile(acceptedTypeGroups: [typeGroup]);
+  if (file == null) return;
+
+  final bytes = await file.readAsBytes();
+  final name = file.name;
+  }
 
   @override
   void initState() {
@@ -162,7 +172,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 title: const Text('Video call'),
                 onTap: () {
                   Navigator.pop(context);
-                  // function start Video call
+                  // TODO Video call
                 },
               ),
               ListTile(
@@ -217,13 +227,18 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 Expanded(
                   child: TextField(
                     controller: _messageController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: 'Type a message...',
                       border: InputBorder.none,
+                      prefixIcon: IconButton(
+                        icon: const Icon(Icons.attach_file, color: Colors.grey),
+                        onPressed: _attachFile,
+                      ),
                     ),
                     onSubmitted: (_) => _sendMessage(),
                   ),
                 ),
+                const SizedBox(width: 4),
                 IconButton(
                   icon: const Icon(Icons.send, color: Colors.blue),
                   onPressed: _sendMessage,

@@ -36,6 +36,7 @@ dependencies:
   flutter_webrtc:  ^0.14.1
   flutter_olm: ^2.0.0
   flutter_callkit_incoming: ^2.5.2
+  file_selector: ^0.9.5
   provider: ^6.0.0
   http: ^0.13.6
   permission_handler: ^12.0.0+1
