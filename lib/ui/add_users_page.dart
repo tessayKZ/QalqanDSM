@@ -22,11 +22,17 @@ class _AddUsersPageState extends State<AddUsersPage> {
       );
       return;
     }
-
     setState(() => _isLoading = true);
+    final exists = await MatrixService.userExists(login);
+    if (!exists) {
+      setState(() => _isLoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('User not found on server')),
+      );
+      return;
+    }
     final room = await MatrixService.createDirectChat(login);
     setState(() => _isLoading = false);
-
     if (room != null) {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => ChatDetailPage(room: room)),

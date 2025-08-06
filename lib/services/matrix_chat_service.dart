@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/room.dart';
 import '../models/message.dart';
+import 'matrix_auth.dart';
 
 class MatrixService {
   static const String _homeServerUrl = 'https://webqalqan.com';
@@ -317,8 +318,22 @@ class MatrixService {
     return all;
   }
 
+  static Future<bool> userExists(String userId) async {
+    if (_accessToken == null) return false;
+    final target = userId.startsWith('@')
+        ? userId
+        : '@$userId:${Uri.parse(_homeServerUrl).host}';
+    final uri = Uri.parse(
+      '$_homeServerUrl/_matrix/client/r0/profile/$target'
+          '?access_token=$_accessToken',
+    );
+    final resp = await http.get(uri);
+    return resp.statusCode == 200;
+  }
+
   static Future<Room?> createDirectChat(String userId) async {
     if (_accessToken == null) return null;
+    if (!await userExists(userId)) return null;
 
     final target = userId.startsWith('@')
         ? userId
