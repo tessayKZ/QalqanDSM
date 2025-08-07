@@ -126,7 +126,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
   }
 
-
   void _showCallOptions() {
     showModalBottomSheet(
       context: context,

@@ -1,7 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import '../models/room.dart';
 import '../services/matrix_chat_service.dart';
-import 'chat_detail_page.dart';
 
 class AddUsersPage extends StatefulWidget {
   const AddUsersPage({Key? key}) : super(key: key);
@@ -22,7 +23,9 @@ class _AddUsersPageState extends State<AddUsersPage> {
       );
       return;
     }
+
     setState(() => _isLoading = true);
+
     final exists = await MatrixService.userExists(login);
     if (!exists) {
       setState(() => _isLoading = false);
@@ -31,17 +34,45 @@ class _AddUsersPageState extends State<AddUsersPage> {
       );
       return;
     }
-    final room = await MatrixService.createDirectChat(login);
+
+    final Room? newRoom = await MatrixService.createDirectChat(login);
     setState(() => _isLoading = false);
-    if (room != null) {
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => ChatDetailPage(room: room)),
-      );
-    } else {
+
+    if (newRoom == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Failed to create chat')),
       );
+      return;
     }
+
+    final roomToUser = MatrixService.getDirectRoomIdToUserIdMap();
+
+    final Map<String, List<String>> directContent = {};
+    roomToUser.forEach((roomId, userId) {
+      directContent.putIfAbsent(userId, () => []).add(roomId);
+    });
+
+    final host = Uri
+        .parse(MatrixService.homeServer)
+        .host;
+    final userId = login.startsWith('@') ? login : '@$login:$host';
+    directContent.update(
+      userId,
+          (list) => list..add(newRoom.id),
+      ifAbsent: () => [newRoom.id],
+    );
+
+    final ok = await MatrixService.setDirectRooms(directContent);
+    setState(() => _isLoading = false);
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Warning: couldn’t update direct rooms')),
+      );
+      return;
+    }
+
+    await MatrixService.syncOnce();
+    Navigator.of(context).pop(newRoom);
   }
 
   @override
@@ -52,11 +83,10 @@ class _AddUsersPageState extends State<AddUsersPage> {
         centerTitle: true,
       ),
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/background.png'),
+            fit: BoxFit.cover,
           ),
         ),
         child: Center(

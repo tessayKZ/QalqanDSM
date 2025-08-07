@@ -131,7 +131,8 @@ class _ChatListPageState extends State<ChatListPage> {
             style: const TextStyle(fontSize: 20, color: Colors.white),
           ),
         ),
-        title: Text(room.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+        title: Text(room.name,
+            style: const TextStyle(fontWeight: FontWeight.bold)),
         subtitle: room.lastMessage != null
             ? Text(
           "${room.lastMessage!['sender'].split(':').first}: "
@@ -140,7 +141,55 @@ class _ChatListPageState extends State<ChatListPage> {
           overflow: TextOverflow.ellipsis,
         )
             : null,
-        trailing: const Icon(Icons.chevron_right),
+        trailing: PopupMenuButton<String>(
+          icon: const Icon(Icons.more_vert),
+          onSelected: (value) async {
+            if (value == 'settings') {
+              // TODO: settings rooms
+            } else if (value == 'leave') {
+                    _timer?.cancel();
+
+                  final ok = await MatrixService.leaveRoom(room.id);
+                  if (ok) {
+                    await MatrixService.syncOnce();
+
+                    final all       = MatrixService.getJoinedRooms();
+                    final directIds = MatrixService.getDirectRoomIds();
+                    final directMap = MatrixService.getDirectRoomIdToUserIdMap();
+
+                    final people = <Room>[];
+                    for (var r in all.where((r) => directIds.contains(r.id))) {
+                      final dn = await MatrixService.getUserDisplayName(directMap[r.id]!);
+                      r.name = dn;
+                      people.add(r);
+                    }
+                    final groups = all.where((r) => !directIds.contains(r.id)).toList();
+
+                    setState(() {
+                      _peopleRooms = people;
+                      _groupRooms  = groups;
+                    });
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('You left ${room.name}')),
+                    );
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Failed to leave room')),
+                    );
+                  }
+
+                  _timer = Timer.periodic(
+                    const Duration(seconds: 5),
+                    (_) => _silentRefresh(),
+                  );
+            }
+          },
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'settings', child: Text('Settings')),
+            const PopupMenuItem(value: 'leave',    child: Text('Leave')),
+          ],
+        ),
         onTap: () async {
           await Navigator.of(context).push(
             MaterialPageRoute(builder: (_) => ChatDetailPage(room: room)),
@@ -150,6 +199,7 @@ class _ChatListPageState extends State<ChatListPage> {
       ),
     );
   }
+
 
   @override
   void dispose() {
@@ -171,19 +221,27 @@ class _ChatListPageState extends State<ChatListPage> {
           IconButton(
             icon: const Icon(Icons.person_add),
             tooltip: 'Add User',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const AddUsersPage()),
-            ),
+            onPressed: () async {
+              final Room? newRoom = await Navigator.of(context).push<Room>(
+                MaterialPageRoute(builder: (_) => const AddUsersPage()),
+              );
+              if (newRoom != null) {
+                await _initialLoad();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ChatDetailPage(room: newRoom)),
+                );
+              }
+            },
           ),
         ],
       ),
+
       extendBodyBehindAppBar: true,
       body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF6A11CB), Color(0xFF2575FC)],
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/background.png'),
+            fit: BoxFit.cover,
           ),
         ),
         child: SafeArea(

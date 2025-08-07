@@ -414,4 +414,35 @@ class MatrixService {
     }
     return _localPart(userId);
   }
+
+  static Future<bool> leaveRoom(String roomId) async {
+    if (_accessToken == null) return false;
+    final uri = Uri.parse('$_homeServerUrl/_matrix/client/r0/rooms/$roomId/leave');
+    final resp = await http.post(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $_accessToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({}),
+    );
+    return resp.statusCode == 200 || resp.statusCode == 201;
+  }
+
+  static Future<bool> setDirectRooms(Map<String, List<String>> directMap) async {
+    if (_accessToken == null || _fullUserId == null) return false;
+    final uri = Uri.parse(
+        '$_homeServerUrl/_matrix/client/r0/user/$_fullUserId/account_data/m.direct'
+    );
+    final resp = await http.put(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_accessToken',
+      },
+      body: jsonEncode(directMap),
+    );
+    print('DEBUG setDirectRooms → ${resp.statusCode}: ${resp.body}');
+    return resp.statusCode == 200;
+  }
 }
