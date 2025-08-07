@@ -27,7 +27,7 @@ class AudioCallPage extends StatefulWidget {
 class _AudioCallPageState extends State<AudioCallPage> {
   late final CallService _callService;
   bool _muted = false;
-  bool _speakerOn = false;
+  bool _speakerOn = true;
   String _status = 'Connecting...';
 
   final Stopwatch _stopwatch = Stopwatch();
@@ -50,16 +50,22 @@ class _AudioCallPageState extends State<AudioCallPage> {
       },
     );
 
-    if (widget.isIncoming) {
-      _callService.answerCall(
-        roomId: widget.roomId,
-        callId: widget.callId!,
-        offer: widget.offer!,
-      );
-    } else {
-      _callService.startCall(roomId: widget.roomId);
-    }
-    Helper.setSpeakerphoneOn(_speakerOn);
+        Helper.setSpeakerphoneOn(_speakerOn);
+
+        Future<void> startFuture = widget.isIncoming
+          ? _callService.answerCall(
+              roomId: widget.roomId,
+              callId: widget.callId!,
+              offer: widget.offer!,
+            )
+          : _callService.startCall(roomId: widget.roomId);
+
+        startFuture.then((_) {
+          setState(() => _muted = false);
+          for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+            Helper.setMicrophoneMute(false, track);
+          }
+        });
   }
 
   void _updateStatus(String status) {
@@ -69,9 +75,12 @@ class _AudioCallPageState extends State<AudioCallPage> {
       return;
     }
 
-    if (status=='Call ended' || status=='Disconnected') {
-      setState(() => _callEnded=true);
-      Future.delayed(const Duration(seconds:2), (){
+    if (status == 'Call ended' || status == 'Disconnected') {
+      _stopwatch.stop();
+      _finalDuration = _stopwatch.elapsed;
+
+      setState(() => _callEnded = true);
+      Future.delayed(const Duration(seconds: 2), () {
         if (mounted) Navigator.of(context).pop();
       });
       return;

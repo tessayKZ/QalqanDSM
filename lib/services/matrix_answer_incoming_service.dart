@@ -1,40 +1,10 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:matrix/matrix.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
-
-@immutable
-class AppConfig {
-  final String homeserver;
-  final String username;
-  final String password;
-  final String roomId;
-
-  const AppConfig({
-    required this.homeserver,
-    required this.username,
-    required this.password,
-    required this.roomId,
-  });
-
-  factory AppConfig.fromJson(Map<String, dynamic> json) => AppConfig(
-    homeserver: json['homeserver'] as String,
-    username: json['username'] as String,
-    password: json['password'] as String,
-    roomId: json['room_id'] as String,
-  );
-}
-
-Future<AppConfig> loadConfig() async {
-  final raw = await rootBundle.loadString('assets/config.json');
-  final data = json.decode(raw) as Map<String, dynamic>;
-  return AppConfig.fromJson(data);
-}
 
 class CallService {
   String? _roomId;
@@ -58,13 +28,7 @@ class CallService {
 
   Future<void> startCall({ required String roomId }) async {
     _roomId = roomId;
-    late AppConfig config;
-    try {
-      config = await loadConfig();
-    } catch (e) {
-      onStatus('Failed to load config: $e');
-      return;
-    }
+    const homeserver = 'https://webqalqan.com';
 
     if (_matrixClient != null) {
       await _matrixClient!.logout().catchError((_) {});
@@ -81,7 +45,7 @@ class CallService {
     _matrixClient = client;
     try {
       await client.init();
-      await client.checkHomeserver(Uri.parse(config.homeserver));
+      await client.checkHomeserver(Uri.parse(homeserver));
       final login = await client.login(
         LoginType.mLoginPassword,
         identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
@@ -104,19 +68,20 @@ class CallService {
         'video': false,
       });
 
-      final cfg = {
-        'iceServers': [
-          {'urls': 'stun:stun.l.google.com:19302'},
-          {
-            'urls': 'turn:webqalqan.com:3478',
-            'username': 'turnuser',
-            'credential': 'turnpass',
-          }
-        ]
-      };
-      _peerConnection = await createPeerConnection(cfg, {
-        'sdpSemantics': 'unified-plan'
-      });
+            _peerConnection = await createPeerConnection(
+                  {
+                      'iceServers': [
+                      {'urls': 'stun:stun.l.google.com:19302'},
+                      {
+                          'urls': 'turn:webqalqan.com:3478',
+                          'username': 'turnuser',
+                          'credential': 'turnpass',
+                      },
+                    ],
+                'sdpSemantics': 'unified-plan',
+              },
+              {},
+                );
       _localStream!.getTracks().forEach((t) => _peerConnection?.addTrack(t, _localStream!));
 
             _peerConnection!.onTrack = (RTCTrackEvent event) {
@@ -300,14 +265,13 @@ extension CallServiceAnswer on CallService {
     required Map<String, dynamic> offer,
   }) async {
     _callId = callId;
-    onStatus('Loading config...');
-    final config = await loadConfig();
+    const homeserver = 'https://webqalqan.com';
 
-    onStatus('Logging in...');
+        onStatus('Logging in...');
         _matrixClient?.dispose();
         _matrixClient = Client('AnswerServiceClient');
         await _matrixClient!.init();
-        await _matrixClient!.checkHomeserver(Uri.parse(config.homeserver));
+        await _matrixClient!.checkHomeserver(Uri.parse(homeserver));
         final login = await _matrixClient!.login(
           LoginType.mLoginPassword,
           identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
@@ -328,19 +292,20 @@ extension CallServiceAnswer on CallService {
       'video': false,
     });
 
-    final iceConfig = {
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-        {
-          'urls': 'turn:webqalqan.com:3478',
-          'username': 'turnuser',
-          'credential': 'turnpass',
-        }
-      ]
-    };
-    _peerConnection = await createPeerConnection(iceConfig, {
-      'sdpSemantics': 'unified-plan',
-    });
+        _peerConnection = await createPeerConnection(
+              {
+                  'iceServers': [
+                  {'urls': 'stun:stun.l.google.com:19302'},
+                  {
+                      'urls': 'turn:webqalqan.com:3478',
+                      'username': 'turnuser',
+                      'credential': 'turnpass',
+                  },
+                ],
+            'sdpSemantics': 'unified-plan',
+          },
+          {},
+            );
     _localStream!.getTracks().forEach((t) => _peerConnection!.addTrack(t, _localStream!));
 
         final localClient = _matrixClient!;

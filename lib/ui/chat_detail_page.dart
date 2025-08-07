@@ -172,7 +172,39 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
                 title: const Text('Video call'),
                 onTap: () {
                   Navigator.pop(context);
-                  // TODO Video call
+                  showDialog(
+                    context: context,
+                    builder: (ctx) {
+                      return Dialog(
+                        backgroundColor: Colors.transparent,
+                        child: Center(
+                          child: Container(
+                            width: 200,
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Coming soon',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(fontSize: 16),
+                                ),
+                                const SizedBox(height: 12),
+                                TextButton(
+                                  onPressed: () => Navigator.of(ctx).pop(),
+                                  child: const Text('OK'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  );
                 },
               ),
               ListTile(

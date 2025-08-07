@@ -62,24 +62,30 @@ class CallService {
       'video': false,
     });
 
-    onStatus('Creating PeerConnection…');
-    final config = {
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},
-        {
-          'urls': 'turn:webqalqan.com:3478',
-          'username': 'turnuser',
-          'credential': 'turnpass',
-        },
-      ],
-    };
-    _peerConnection = await createPeerConnection(config, {});
-    _localStream!.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-    });
-    _peerConnection!.onAddStream = (stream) {
-      onAddRemoteStream(stream);
-    };
+        onStatus('Creating PeerConnection…');
+        final iceConfig = {
+          'iceServers': [
+            {'urls': 'stun:stun.l.google.com:19302'},
+            {
+              'urls': 'turn:webqalqan.com:3478',
+              'username': 'turnuser',
+              'credential': 'turnpass',
+            },
+          ],
+        };
+        _peerConnection = await createPeerConnection(
+          iceConfig,
+          {'sdpSemantics': 'unified-plan'},
+        );
+
+    _peerConnection!.onTrack = (RTCTrackEvent event) {
+        if (event.track.kind == 'audio' && event.streams.isNotEmpty) {
+          onAddRemoteStream(event.streams[0]);
+        }
+      };
+    _localStream!.getAudioTracks().forEach((track) {
+        _peerConnection!.addTrack(track, _localStream!);
+      });
 
     _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
     _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
@@ -190,7 +196,11 @@ class CallService {
 
     Future<void> hangup() async {
       if (_matrixClient != null && _callId != null && _roomId != null) {
-        final body = {'call_id': _callId, 'version': '1'};
+            final body = {
+              'call_id': _callId,
+              'party_id': _partyId,
+              'version': '1',
+            };
         final txn  = 'txn_${DateTime.now().millisecondsSinceEpoch}';
         await _matrixClient!.sendMessage(
             _roomId!, 'm.call.hangup', txn, body

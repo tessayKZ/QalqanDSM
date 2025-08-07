@@ -17,7 +17,7 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   late final CallService _callService;
 
   bool _muted = false;
-  bool _speakerOn = false;
+  bool _speakerOn = true;
   String _status = 'Connecting...';
   bool _callEnded = false;
   Duration _finalDuration = Duration.zero;
@@ -30,17 +30,23 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   @override
   void initState() {
     super.initState();
-    _remoteRenderer = RTCVideoRenderer()..initialize();
+      _remoteRenderer = RTCVideoRenderer()..initialize();
+      _callService = CallService(
+            onStatus: _updateStatus,
+            onAddRemoteStream: (stream) {
+            _remoteRenderer.srcObject = stream;
+        },
+      );
 
-    _callService = CallService(
-      onStatus: _updateStatus,
-      onAddRemoteStream: (stream) {
-        _remoteRenderer.srcObject = stream;
-      },
-    );
+      Helper.setSpeakerphoneOn(true);
 
-    _callService.startCall(roomId: widget.roomId);
-    Helper.setSpeakerphoneOn(_speakerOn);
+      _callService
+        .startCall(roomId: widget.roomId)
+        .then((_) {
+          for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+            Helper.setMicrophoneMute(false, track);
+          }
+        });
   }
 
   void _updateStatus(String status) {

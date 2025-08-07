@@ -25,9 +25,24 @@ class MatrixCallService {
     client.sync();
     _subInvite = client.onTimelineEvent.stream
         .where((e) => e.type == 'm.call.invite')
-        .listen(_onInvite, onError: (e) => debugPrint('CallService err: $e'));
+        .listen(_onInvite);
+
+    _subHangup = client.onTimelineEvent.stream
+        .where((e) => e.type == 'm.call.hangup')
+        .listen(_onHangup, onError: (e) => debugPrint('Hangup err: $e'));
   }
 
+  Future<void> _onHangup(Event e) async {
+    final content = e.content as Map<String, dynamic>?;
+    final callId = content?['call_id'] as String?;
+    if (callId == null) return;
+
+    await FlutterCallkitIncoming.endCall(callId);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      navigatorKey.currentState?.maybePop();
+    });
+  }
 
   Future<void> _onInvite(Event e) async {
     final content = e.content as Map<String, dynamic>?;
