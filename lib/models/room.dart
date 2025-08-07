@@ -1,6 +1,6 @@
 class Room {
   final String id;
-  final String name;
+  String name;
   final Map<String, dynamic>? lastMessage;
 
   Room({

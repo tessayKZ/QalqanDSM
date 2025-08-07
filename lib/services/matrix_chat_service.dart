@@ -11,6 +11,9 @@ class MatrixService {
   static String? _nextBatch;
   static Map<String, dynamic>? _lastSyncResponse;
   static bool _syncing = false;
+  static String _localPart(String userId) {
+    return userId.split(':').first.replaceFirst('@', '');
+  }
 
   static String? get accessToken => _accessToken;
 
@@ -363,5 +366,52 @@ class MatrixService {
       print('Direct chat creation failed ${response.statusCode}: ${response.body}');
       return null;
     }
+  }
+
+  static Map<String, String> getDirectRoomIdToUserIdMap() {
+    final events = (_lastSyncResponse?['account_data']?['events'] as List?)
+        ?.cast<Map<String, dynamic>>() ?? [];
+    final directEvent = events
+        .firstWhere((e) => e['type'] == 'm.direct', orElse: () => {});
+    if (directEvent.isEmpty) return {};
+    final content = directEvent['content'] as Map<String, dynamic>;
+    final map = <String, String>{};
+    content.forEach((user, rooms) {
+      for (var r in (rooms as List)) {
+        map[r] = user;
+      }
+    });
+    return map;
+  }
+
+  static List<String> getDirectRoomIds() {
+    final events = (_lastSyncResponse?['account_data']?['events']
+    as List?)
+        ?.cast<Map<String, dynamic>>() ?? [];
+    final directEvent = events.firstWhere(
+          (e) => e['type'] == 'm.direct',
+      orElse: () => {},
+    );
+    if (directEvent.isEmpty) return [];
+    final content = directEvent['content'] as Map<String, dynamic>;
+    final List<String> rooms = [];
+    for (var entry in content.values) {
+      if (entry is List) rooms.addAll(entry.cast<String>());
+    }
+    return rooms;
+  }
+
+  static Future<String> getUserDisplayName(String userId) async {
+    if (_accessToken == null) return _localPart(userId);
+    final uri = Uri.parse('$_homeServerUrl/_matrix/client/v3/profile/$userId');
+    final resp = await http.get(uri, headers: {
+      'Authorization': 'Bearer $_accessToken',
+      'Content-Type':  'application/json',
+    });
+    if (resp.statusCode == 200) {
+      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      return data['displayname'] as String? ?? _localPart(userId);
+    }
+    return _localPart(userId);
   }
 }
