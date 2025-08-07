@@ -224,7 +224,6 @@ class MatrixService {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final eventId = data['event_id'] as String?;
 
-      await _doSync();
       return eventId;
     } else {
       print('sendMessage failed ${response.statusCode}: ${response.body}');
@@ -342,21 +341,12 @@ class MatrixService {
         '$_homeServerUrl/_matrix/client/r0/createRoom?access_token=$_accessToken'
     );
 
-    final payload = jsonEncode({
-      'invite':     [target],
-      'is_direct':  true,
-      'visibility': 'private',
-      'preset':     'trusted_private_chat',
-      'initial_state': [
-        {
-          'type': 'm.room.encryption',
-          'state_key': '',
-          'content': {
-            'algorithm': 'm.megolm.v1.aes-sha2'
-          }
-        }
-      ]
-    });
+        final payload = jsonEncode({
+          'invite':    [target],
+          'is_direct': true,
+          'visibility':'private',
+          'preset':    'trusted_private_chat',
+        });
 
     final response = await http.post(
       uri,

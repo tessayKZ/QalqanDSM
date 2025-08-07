@@ -23,7 +23,34 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   final ScrollController _scrollController = ScrollController();
   List<Message> _messages = [];
   bool _isLoading = true;
-  Timer? _pollTimer;
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _appendNewMessages() {
+    final newEvents = MatrixService.getRoomMessages(widget.room.id);
+    final unique = newEvents.where((e) => !_messages.any((m) => m.id == e.id)).toList();
+    if (unique.isNotEmpty && mounted) {
+      setState(() => _messages.addAll(unique));
+      _scrollToBottom();
+    }
+  }
+
+  void _startSyncLoop() async {
+    while (mounted) {
+      await MatrixService.forceSync();
+      _appendNewMessages();
+    }
+  }
 
   Future<void> _attachFile() async {
   final typeGroup = XTypeGroup(label: 'all', extensions: ['*']);
@@ -38,11 +65,11 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   void initState() {
     super.initState();
     _loadFullHistory();
+    _startSyncLoop();
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -63,65 +90,42 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         );
       }
     });
-
-    _pollTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      await MatrixService.forceSync();
-      final newEvents = MatrixService.getRoomMessages(widget.room.id);
-      final unique = newEvents.where((e) => !_messages.any((m) => m.id == e.id)).toList();
-      if (unique.isNotEmpty) {
-        setState(() {
-          _messages.addAll(unique);
-        });
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOut,
-            );
-          }
-        });
-      }
-    });
   }
 
   Future<void> _sendMessage() async {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
+    _messageController.clear();
 
-       _messageController.clear();
-       final serverEventId = await MatrixService.sendMessage(widget.room.id, text);
-       if (serverEventId == null) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOut,
+    final tempId = DateTime.now().millisecondsSinceEpoch.toString();
+    setState(() {
+      _messages.add(Message(
+        id:        tempId,
+        sender:    MatrixService.userId!,
+        text:      text,
+        type:      MessageType.text,
+        timestamp: DateTime.now(),
+      ));
+    });
+    _scrollToBottom();
+
+    final serverEventId = await MatrixService.sendMessage(widget.room.id, text);
+    if (serverEventId == null) return;
+
+    setState(() {
+      final idx = _messages.indexWhere((m) => m.id == tempId);
+      if (idx != -1) {
+        _messages[idx] = Message(
+          id:        serverEventId,
+          sender:    MatrixService.userId!,
+          text:      text,
+          type:      MessageType.text,
+          timestamp: _messages[idx].timestamp,
         );
       }
     });
-
-    await MatrixService.sendMessage(widget.room.id, text);
-    await MatrixService.forceSync();
-
-    final newEvents = MatrixService.getRoomMessages(widget.room.id);
-    final unique = newEvents.where((e) => !_messages.any((m) => m.id == e.id)).toList();
-    if (unique.isNotEmpty) {
-      setState(() {
-        _messages.addAll(unique);
-      });
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (_scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
   }
+
 
   void _showCallOptions() {
     showModalBottomSheet(
