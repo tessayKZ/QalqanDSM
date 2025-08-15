@@ -9,6 +9,7 @@ import '../services/matrix_auth.dart';
 import '../ui/incoming_audio_call_page.dart';
 import '../ui/outgoing_audio_call_page.dart';
 import 'package:file_selector/file_selector.dart';
+import 'dart:ui';
 
 class ChatDetailPage extends StatefulWidget {
   final Room room;
@@ -19,6 +20,7 @@ class ChatDetailPage extends StatefulWidget {
 }
 
 class _ChatDetailPageState extends State<ChatDetailPage> {
+  bool _isUploading = false;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   List<Message> _messages = [];
@@ -47,9 +49,42 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
 
   void _startSyncLoop() async {
     while (mounted) {
-      await MatrixService.forceSync();
+      await MatrixService.forceSync(timeout: 5000);
       _appendNewMessages();
+      }
+  }
+
+  List<Widget> _buildMessageList() {
+    List<Widget> items = [];
+    DateTime? lastDate;
+    for (var i = 0; i < _messages.length; i++) {
+      final msg = _messages[i];
+      final msgDate = DateTime(msg.timestamp.year, msg.timestamp.month, msg.timestamp.day);
+      if (lastDate == null || msgDate.isAfter(lastDate)) {
+        items.add(_buildDateSeparator(msgDate));
+        lastDate = msgDate;
+      }
+      final isMe = msg.sender == MatrixService.userId;
+      items.add(_buildMessageBubble(msg, isMe, index: i));
     }
+    return items;
+  }
+
+  Widget _buildDateSeparator(DateTime date) {
+    final text = DateFormat('d MMMM yyyy').format(date);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black26,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(text, style: const TextStyle(color: Colors.white70)),
+        ),
+      ),
+    );
   }
 
   Future<void> _attachFile() async {
@@ -66,6 +101,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     super.initState();
     _loadFullHistory();
     _startSyncLoop();
+    _messageController.addListener(() => setState(() {}));
   }
 
   @override
@@ -112,7 +148,6 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     final serverEventId = await MatrixService.sendMessage(widget.room.id, text);
     if (serverEventId == null) return;
 
-    setState(() {
       final idx = _messages.indexWhere((m) => m.id == tempId);
       if (idx != -1) {
         _messages[idx] = Message(
@@ -123,7 +158,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           timestamp: _messages[idx].timestamp,
         );
       }
-    });
+      setState(() {});
+      await MatrixService.forceSync();
+      _appendNewMessages();
   }
 
   void _showCallOptions() {
@@ -225,6 +262,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
+
       appBar: AppBar(
         title: Text(widget.room.name),
         centerTitle: true,
@@ -236,48 +276,74 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
-          if (_isLoading)
-            const Expanded(child: Center(child: CircularProgressIndicator()))
-          else
-            Expanded(
-              child: ListView.builder(
-                key: ValueKey(widget.room.id),
-                controller: _scrollController,
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                itemCount: _messages.length,
-                itemBuilder: (context, index) {
-                  final msg = _messages[index];
-                  final isMe = msg.sender == (MatrixService.userId ?? '');
-                  return _buildMessageBubble(msg, isMe);
-                },
-              ),
+          Positioned.fill(
+            child: Image.asset(
+              'assets/background.png',
+              fit: BoxFit.cover,
             ),
-          Container(
-            color: Colors.grey.shade200,
-            padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
-            child: Row(
+          ),
+          Positioned.fill(
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+              child: Container(color: Colors.black.withOpacity(0)),
+            ),
+          ),
+          SafeArea(
+            child: Column(
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _messageController,
-                    decoration: InputDecoration(
-                      hintText: 'Type a message...',
-                      border: InputBorder.none,
-                      prefixIcon: IconButton(
-                        icon: const Icon(Icons.attach_file, color: Colors.grey),
-                        onPressed: _attachFile,
-                      ),
-                    ),
-                    onSubmitted: (_) => _sendMessage(),
+                  child: _isLoading
+                      ? const Center(child: CircularProgressIndicator())
+                      : ListView(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    children: _buildMessageList(),
                   ),
                 ),
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.blue),
-                  onPressed: _sendMessage,
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.white70, Colors.white54],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      _isUploading
+                          ? const SizedBox(
+                        width: 24, height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                          : IconButton(
+                        icon: const Icon(Icons.attach_file),
+                        onPressed: () async {
+                          setState(() => _isUploading = true);
+                          await _attachFile();
+                          setState(() => _isUploading = false);
+                        },
+                      ),
+                      Expanded(
+                        child: TextField(
+                          controller: _messageController,
+                          decoration: const InputDecoration(
+                            hintText: 'Type a message...',
+                            border: InputBorder.none,
+                          ),
+                          onSubmitted: (_) => _sendMessage(),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.send),
+                        onPressed: _messageController.text.trim().isEmpty ? null : _sendMessage,
+                      ),
+                    ],
+                  ),
                 ),
+
               ],
             ),
           ),
@@ -286,7 +352,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     );
   }
 
-  Widget _buildMessageBubble(Message msg, bool isMe) {
+  Widget _buildMessageBubble(Message msg, bool isMe, { required int index }) {
     final align = isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start;
     final timeText = DateFormat('HH:mm, dd.MM.yyyy').format(msg.timestamp);
 
@@ -319,25 +385,43 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
         bottomRight: Radius.circular(12),
       );
       return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 4.0),
-        child: Column(
-          crossAxisAlignment: align,
+        padding: const EdgeInsets.symmetric(vertical: 4.0),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            header,
-            const SizedBox(height: 4),
-            Container(
-              decoration: BoxDecoration(
-                color: bgColor,
-                borderRadius: radius,
+            if (!isMe)
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: CircleAvatar(
+                  radius: 12,
+                  child: Text(
+                    msg.sender.split(':').first.substring(0,1).toUpperCase(),
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                  ),
+                ),
               ),
-              padding: const EdgeInsets.symmetric(
-                  vertical: 8.0, horizontal: 12.0),
-              child: Text(
-                msg.text,
-                style: const TextStyle(
-                    fontSize: 16, color: Colors.black87),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: align,
+                children: [
+                  header,
+                  const SizedBox(height: 4),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: bgColor,
+                      borderRadius: radius,
+                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 12.0),
+                    child: Text(
+                      msg.text,
+                      style: const TextStyle(fontSize: 16, color: Colors.black87),
+                    ),
+                  ),
+                ],
               ),
             ),
+            if (isMe)
+              const SizedBox(width: 32),
           ],
         ),
       );

@@ -2,6 +2,8 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.mycompany.qalqan_dsm">
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
@@ -11,7 +13,8 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL"/>
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT"/>
 
     <application
         android:name="${applicationName}"
@@ -41,10 +44,43 @@
             android:value="2"/>
 
         <service
+            android:name="id.flutter.plugins.flutter_background_service.BackgroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|phoneCall" />
+
+        <receiver
+            android:name="id.flutter.plugins.flutter_background_service.BackgroundServiceBootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name="id.flutter.plugins.flutter_background_service.BackgroundServiceReceiver"
+            android:exported="false"/>
+
+        <service
             android:name="com.hiennv.flutter_callkit_incoming.OngoingNotificationService"
             android:exported="false"
             android:foregroundServiceType="phoneCall|microphone"
             tools:replace="android:exported,android:foregroundServiceType"/>
+
+        <service
+            android:name="com.triniwiz.fluttercallkitincoming.CallkitIncomingService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
+
+        <receiver
+            android:name="com.triniwiz.fluttercallkitincoming.FlutterCallkitIncomingBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.triniwiz.fluttercallkitincoming.INCOMING_CALL" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

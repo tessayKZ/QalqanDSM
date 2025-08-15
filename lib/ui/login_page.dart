@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../main.dart';
 import '../services/matrix_auth.dart';
 import '../services/matrix_chat_service.dart';
 import 'chat_list_page.dart';
@@ -70,9 +69,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       AuthDataCall.instance.login = user;
       AuthDataCall.instance.password = password;
 
-      navigatorKey.currentState?.pushReplacement(
-        MaterialPageRoute(builder: (_) => ChatListPage()),
-      );
+      if (mounted) {
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => ChatListPage()),
+        );
+      }
     } else {
       setState(() {
         _errorText = 'Login failed. Check your credentials.';
@@ -82,6 +83,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('LoginPage.build');
     final size = MediaQuery.of(context).size;
     return Scaffold(
       body: Stack(

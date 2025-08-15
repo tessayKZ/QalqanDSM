@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "666351624238",
+    "project_id": "qalqandsm",
+    "storage_bucket": "qalqandsm.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666351624238:android:c6e580a574d4f86982ffbf",
+        "android_client_info": {
+          "package_name": "com.mycompany.qalqan_dsm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBWG5-G-RMLf9EZKk7OzFrFAQH6hjxu24k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

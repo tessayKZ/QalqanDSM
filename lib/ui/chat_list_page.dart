@@ -113,8 +113,10 @@ class _ChatListPageState extends State<ChatListPage> {
 
   Future<void> _requestPermissions() async {
     if (Platform.isAndroid) {
-      await Permission.notification.request();
       await Permission.systemAlertWindow.request();
+      if (await Permission.notification.isDenied) {
+        await Permission.notification.request();
+      }
     }
   }
 

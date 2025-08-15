@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import '../services/webrtc_helper.dart';
+import '../services/audio_helper.dart';
 import '../services/matrix_answer_incoming_service.dart';
 
 class AudioCallPage extends StatefulWidget {
@@ -27,7 +27,7 @@ class AudioCallPage extends StatefulWidget {
 class _AudioCallPageState extends State<AudioCallPage> {
   late final CallService _callService;
   bool _muted = false;
-  bool _speakerOn = true;
+  bool _speakerOn = false;
   String _status = 'Connecting...';
 
   final Stopwatch _stopwatch = Stopwatch();
@@ -41,31 +41,32 @@ class _AudioCallPageState extends State<AudioCallPage> {
   @override
   void initState() {
     super.initState();
-    _remoteRenderer = RTCVideoRenderer()..initialize();
+    _initializeCall();
+  }
 
+  Future<void> _initializeCall() async {
+    _remoteRenderer = RTCVideoRenderer()..initialize();
     _callService = CallService(
       onStatus: _updateStatus,
-      onAddRemoteStream: (stream) {
-        _remoteRenderer.srcObject = stream;
-      },
+      onAddRemoteStream: (stream) => _remoteRenderer.srcObject = stream,
     );
 
-        Helper.setSpeakerphoneOn(_speakerOn);
+    await AudioHelper.setReceiver();
 
-        Future<void> startFuture = widget.isIncoming
-          ? _callService.answerCall(
-              roomId: widget.roomId,
-              callId: widget.callId!,
-              offer: widget.offer!,
-            )
-          : _callService.startCall(roomId: widget.roomId);
+    final startFuture = widget.isIncoming
+        ? _callService.answerCall(
+      roomId: widget.roomId,
+      callId: widget.callId!,
+      offer: widget.offer!,
+    )
+        : _callService.startCall(roomId: widget.roomId);
 
-        startFuture.then((_) {
-          setState(() => _muted = false);
-          for (var track in _callService.localStream?.getAudioTracks() ?? []) {
-            Helper.setMicrophoneMute(false, track);
-          }
-        });
+    startFuture.then((_) {
+      setState(() => _muted = false);
+      for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+        track.enabled = true;
+      }
+    });
   }
 
   void _updateStatus(String status) {
@@ -196,10 +197,10 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       icon: _muted ? Icons.mic_off : Icons.mic,
                       label: _muted ? 'Unmute' : 'Mute',
                       color: _muted ? Colors.redAccent : Colors.grey,
-                      onTap: () async {
+                      onTap: () {
                         setState(() => _muted = !_muted);
                         for (var track in _callService.localStream?.getAudioTracks() ?? []) {
-                          await Helper.setMicrophoneMute(_muted, track);
+                          track.enabled = !_muted;
                         }
                       },
                     ),
@@ -217,7 +218,11 @@ class _AudioCallPageState extends State<AudioCallPage> {
                       color: Colors.grey,
                       onTap: () async {
                         setState(() => _speakerOn = !_speakerOn);
-                        await Helper.setSpeakerphoneOn(_speakerOn);
+                        if (_speakerOn) {
+                          await AudioHelper.setSpeaker();
+                        } else {
+                          await AudioHelper.setReceiver();
+                        }
                       },
                     ),
                   ],

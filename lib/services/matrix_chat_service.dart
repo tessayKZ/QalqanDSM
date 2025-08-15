@@ -58,8 +58,35 @@ class MatrixService {
     await _doSync();
   }
 
-  static Future<void> forceSync() async {
-    await _doSync();
+  static Future<void> forceSync({int timeout = 5000}) async {
+    if (_accessToken == null) return;
+
+    // собираем параметр since, если есть предыдущая точка синка
+    final sinceParam = _nextBatch != null
+        ? '&since=${Uri.encodeComponent(_nextBatch!)}'
+        : '';
+
+    final uri = Uri.parse(
+        '$_homeServerUrl/_matrix/client/r0/sync'
+            '?timeout=$timeout$sinceParam'
+    );
+    print('DEBUG: forceSync URI=$uri');
+
+    final response = await http.get(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_accessToken',
+      },
+    );
+    if (response.statusCode == 200) {
+      final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+      _lastSyncResponse = decoded;
+      _nextBatch = decoded['next_batch'] as String?;
+      print('>>> New next_batch=$_nextBatch');
+    } else {
+      print('forceSync failed ${response.statusCode}: ${response.body}');
+    }
   }
 
   static Future<void> _doSync() async {

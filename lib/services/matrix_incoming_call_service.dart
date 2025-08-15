@@ -4,7 +4,7 @@ import 'package:matrix/matrix.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
-import '../main.dart';
+import '../main.dart' show navigatorKey;
 import 'package:flutter/material.dart';
 import '../ui/incoming_audio_call_page.dart';
 
