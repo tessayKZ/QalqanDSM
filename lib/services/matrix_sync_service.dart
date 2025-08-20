@@ -21,7 +21,6 @@ class MatrixSyncService {
     });
   }
 
-
   void start() {
     try {
       _client.backgroundSync = true;

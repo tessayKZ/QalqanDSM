@@ -1,4 +1,3 @@
-// models/message.dart
 enum MessageType { text, call, image, file }
 
 class Message {

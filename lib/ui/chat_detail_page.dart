@@ -21,7 +21,7 @@ class ChatDetailPage extends StatefulWidget {
   State<ChatDetailPage> createState() => _ChatDetailPageState();
 }
 
-class _ChatDetailPageState extends State<ChatDetailPage> {
+class _ChatDetailPageState extends State<ChatDetailPage> with WidgetsBindingObserver {
   bool _isUploading = false;
   bool _isLoading = true;
 
@@ -33,13 +33,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
   final Set<String> _pendingTempIds = <String>{};
   Timer? _liveTimer;
 
+  void _startLiveTimer() {
+    _liveTimer ??= Timer.periodic(const Duration(milliseconds: 500), (_) async {
+      await MatrixService.forceSync(timeout: 0);
+      _mergeRecentFromSync();
+    });
+  }
+
+  void _stopLiveTimer() {
+    _liveTimer?.cancel();
+    _liveTimer = null;
+  }
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     _loadFullHistory();
-
     _subRoom = MatrixSyncService.instance
+
         .roomEvents(widget.room.id)
         .where((e) => e.type == 'm.room.message' || e.type == 'm.room.encrypted')
         .listen(_onRoomEvent, onError: (e, st) {
@@ -48,19 +61,26 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     });
 
     _messageController.addListener(() => setState(() {}));
-        _liveTimer = Timer.periodic(const Duration(milliseconds: 500), (_) async {
-            await MatrixService.forceSync(timeout: 0);
-            _mergeRecentFromSync();
-          });
+    _startLiveTimer();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _subRoom?.cancel();
-    _liveTimer?.cancel();
+    _stopLiveTimer();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _startLiveTimer();
+    } else {
+      _stopLiveTimer();
+    }
   }
 
   Future<void> _loadFullHistory() async {
@@ -104,8 +124,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     return null;
   }
 
-  void _onRoomEvent(mx.Event e) {
-    final incoming = _eventToUiMessage(e);
+   void _onRoomEvent(mx.Event e) {
+       final incoming = _eventToUiMessage(e);
+       if (incoming == null) return;
     final txid = _extractTxnId(e);
 
     setState(() {
@@ -278,10 +299,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     return 'application/octet-stream';
   }
 
-  Message _eventToUiMessage(mx.Event e) {
+  Message? _eventToUiMessage(mx.Event e) {
     final content = (e.content ?? const {}) as Map<String, dynamic>;
-    final msgtype = (content['msgtype'] as String?) ?? 'm.text';
-    final body = (content['body'] as String?) ?? '';
+    final msgtype = content['msgtype'] as String?;
+    final body    = (content['body'] as String?) ?? '';
+    final type    = e.type;
+
+        if (type == 'm.room.encrypted' && msgtype == null) {
+
+          return null;
+        }
+
+        final eventId = e.eventId;
+        if (eventId == null || eventId.isEmpty) {
+          return null;
+        }
 
     final int ts = (e.originServerTs is int)
         ? e.originServerTs as int
@@ -299,10 +331,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
           thumbMxc, width: 512, height: 512, thumbnail: true);
 
       return Message(
-        id: e.eventId ?? DateTime
-            .now()
-            .millisecondsSinceEpoch
-            .toString(),
+        id: eventId,
         sender: e.senderId ?? '',
         text: body,
 
@@ -327,10 +356,7 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
       final mediaUrl = MatrixService.mxcToHttp(mxcUrl);
 
       return Message(
-        id: e.eventId ?? DateTime
-            .now()
-            .millisecondsSinceEpoch
-            .toString(),
+        id: eventId,
         sender: e.senderId ?? '',
         text: name,
 
@@ -344,12 +370,9 @@ class _ChatDetailPageState extends State<ChatDetailPage> {
     }
 
 
-    final isCall = msgtype.startsWith('m.call') || e.type.startsWith('m.call');
+    final isCall = type.startsWith('m.call');
     return Message(
-      id: e.eventId ?? DateTime
-          .now()
-          .millisecondsSinceEpoch
-          .toString(),
+      id: eventId,
       sender: e.senderId ?? '',
       text: body,
       type: isCall ? MessageType.call : MessageType.text,

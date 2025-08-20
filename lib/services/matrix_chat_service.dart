@@ -10,7 +10,8 @@ class MatrixService {
   static const String _homeServerUrl = 'https://webqalqan.com';
   static String homeserverBase = 'https://webqalqan.com';
   static mx.Client get client => AuthService.client!;
-
+  static final Map<String, dynamic> _joinedRoomsSnapshot = <String, dynamic>{};
+  static Map<String, dynamic>? _mDirectCache;
   static String? _accessToken;
   static String? _fullUserId;
   static String? _nextBatch;
@@ -59,8 +60,10 @@ class MatrixService {
   static Future<void> syncOnce() async {
     _lastSyncResponse = null;
     _nextBatch = null;
+    _joinedRoomsSnapshot.clear();
     await _doSync();
   }
+
 
   static Future<void> forceSync({int timeout = 5000}) async {
     if (_accessToken == null) return;
@@ -84,8 +87,7 @@ class MatrixService {
     );
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      _lastSyncResponse = decoded;
-      _nextBatch = decoded['next_batch'] as String?;
+      _applySyncData(decoded);
       print('>>> New next_batch=$_nextBatch');
     } else {
       print('forceSync failed ${response.statusCode}: ${response.body}');
@@ -112,9 +114,7 @@ class MatrixService {
 
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
-      _lastSyncResponse = decoded;
-      _nextBatch = decoded['next_batch'] as String?;
-      print('>>> New next_batch=$_nextBatch');
+      _applySyncData(decoded);
     } else {
       print('SYNC failed ${response.statusCode}: ${response.body}');
     }
@@ -133,13 +133,43 @@ class MatrixService {
     _syncing = false;
   }
 
+  static void _applySyncData(Map<String, dynamic> decoded) {
+    _lastSyncResponse = decoded;
+    _nextBatch = decoded['next_batch'] as String?;
+
+    final rooms = decoded['rooms'] as Map<String, dynamic>?;
+    if (rooms != null) {
+      final join = rooms['join'] as Map<String, dynamic>?;
+      if (join != null) {
+        join.forEach((roomId, roomData) {
+          _joinedRoomsSnapshot[roomId] = roomData;
+        });
+      }
+      final leave = rooms['leave'] as Map<String, dynamic>?;
+      if (leave != null) {
+        for (final roomId in leave.keys) {
+          _joinedRoomsSnapshot.remove(roomId);
+        }
+      }
+    }
+
+    final events = (decoded['account_data']?['events'] as List?)
+        ?.cast<Map<String, dynamic>>();
+    if (events != null) {
+      final direct = events.firstWhere(
+            (e) => e['type'] == 'm.direct',
+        orElse: () => {},
+      );
+      if (direct.isNotEmpty) {
+        _mDirectCache = direct['content'] as Map<String, dynamic>?;
+      }
+    }
+  }
+
   static List<Room> getJoinedRooms() {
-    final resp = _lastSyncResponse;
-    if (resp == null) return [];
+    if (_joinedRoomsSnapshot.isEmpty) return [];
 
-    final roomsSection = resp['rooms']?['join'] as Map<String, dynamic>?;
-    if (roomsSection == null) return [];
-
+    final roomsSection = _joinedRoomsSnapshot;
     final List<Room> result = [];
     roomsSection.forEach((roomId, roomDataRaw) {
       final roomData = roomDataRaw as Map<String, dynamic>;
@@ -160,16 +190,13 @@ class MatrixService {
       final timelineEvents = roomData['timeline']?['events'] as List<dynamic>?;
       if (timelineEvents != null && timelineEvents.isNotEmpty) {
         lastMsg = (timelineEvents.lastWhere(
-              (e) => ((e as Map<String, dynamic>)['type'] as String).startsWith('m.room.message'),
+              (e) => ((e as Map<String, dynamic>)['type'] as String)
+              .startsWith('m.room.message'),
           orElse: () => null,
         ) as Map<String, dynamic>?);
       }
 
-      result.add(Room(
-        id: roomId,
-        name: name,
-        lastMessage: lastMsg,
-      ));
+      result.add(Room(id: roomId, name: name, lastMessage: lastMsg));
     });
 
     return result;
@@ -446,36 +473,54 @@ class MatrixService {
   }
 
   static Map<String, String> getDirectRoomIdToUserIdMap() {
-    final events = (_lastSyncResponse?['account_data']?['events'] as List?)
-        ?.cast<Map<String, dynamic>>() ?? [];
-    final directEvent = events
-        .firstWhere((e) => e['type'] == 'm.direct', orElse: () => {});
-    if (directEvent.isEmpty) return {};
-    final content = directEvent['content'] as Map<String, dynamic>;
-    final map = <String, String>{};
-    content.forEach((user, rooms) {
-      for (var r in (rooms as List)) {
-        map[r] = user;
-      }
-    });
-    return map;
-  }
+    Map<String, dynamic>? content;
 
-  static List<String> getDirectRoomIds() {
-    final events = (_lastSyncResponse?['account_data']?['events']
-    as List?)
+    final events = (_lastSyncResponse?['account_data']?['events'] as List?)
         ?.cast<Map<String, dynamic>>() ?? [];
     final directEvent = events.firstWhere(
           (e) => e['type'] == 'm.direct',
       orElse: () => {},
     );
-    if (directEvent.isEmpty) return [];
-    final content = directEvent['content'] as Map<String, dynamic>;
-    final List<String> rooms = [];
-    for (var entry in content.values) {
-      if (entry is List) rooms.addAll(entry.cast<String>());
+    if (directEvent.isNotEmpty) {
+      content = directEvent['content'] as Map<String, dynamic>?;
+      _mDirectCache = content;
+    } else {
+      content = _mDirectCache;
     }
-    return rooms;
+    if (content == null) return {};
+
+    final map = <String, String>{};
+    content.forEach((userId, rooms) {
+      for (final r in (rooms as List)) {
+        map[r as String] = userId as String;
+      }
+    });
+    return map;
+  }
+
+
+  static List<String> getDirectRoomIds() {
+    Map<String, dynamic>? content;
+
+    final events = (_lastSyncResponse?['account_data']?['events'] as List?)
+        ?.cast<Map<String, dynamic>>() ?? [];
+    final directEvent = events.firstWhere(
+          (e) => e['type'] == 'm.direct',
+      orElse: () => {},
+    );
+    if (directEvent.isNotEmpty) {
+      content = directEvent['content'] as Map<String, dynamic>?;
+      _mDirectCache = content;
+    } else {
+      content = _mDirectCache;
+    }
+    if (content == null) return [];
+
+    final ids = <String>[];
+    for (final entry in content.values) {
+      if (entry is List) ids.addAll(entry.cast<String>());
+    }
+    return ids;
   }
 
   static Future<String> getUserDisplayName(String userId) async {
@@ -508,9 +553,11 @@ class MatrixService {
 
   static Future<bool> setDirectRooms(Map<String, List<String>> directMap) async {
     if (_accessToken == null || _fullUserId == null) return false;
+
     final uri = Uri.parse(
-        '$_homeServerUrl/_matrix/client/r0/user/$_fullUserId/account_data/m.direct'
+      '$_homeServerUrl/_matrix/client/r0/user/$_fullUserId/account_data/m.direct',
     );
+
     final resp = await http.put(
       uri,
       headers: {
@@ -519,9 +566,14 @@ class MatrixService {
       },
       body: jsonEncode(directMap),
     );
-    print('DEBUG setDirectRooms → ${resp.statusCode}: ${resp.body}');
-    return resp.statusCode == 200;
+
+    final ok = resp.statusCode == 200;
+    if (ok) {
+      _mDirectCache = directMap;
+    }
+    return ok;
   }
+
 
   static String? mxcToHttp(String? mxc, {int? width, int? height, bool thumbnail = false}) {
     if (mxc == null || !mxc.startsWith('mxc://')) return null;
