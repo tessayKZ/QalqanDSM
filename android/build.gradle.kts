@@ -15,7 +15,15 @@ subprojects {
 subprojects {
     project.evaluationDependsOn(":app")
 }
+subprojects {
+    configurations.configureEach {
+        exclude(group = "com.google.crypto.tink", module = "tink-android")
 
+        resolutionStrategy {
+            force("com.google.crypto.tink:tink:1.17.0")
+        }
+    }
+}
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

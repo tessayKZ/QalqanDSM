@@ -5,6 +5,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/auth_data.dart';
 import '../services/matrix_auth.dart';
+import 'package:qalqan_dsm/services/call_store.dart';
 
 class CallService {
     final void Function(String status) onStatus;
@@ -90,6 +91,7 @@ class CallService {
     _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
     _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
     AuthDataCall.instance.outgoingCallIds.add(_callId!);
+    await CallStore.markOutgoing(_callId!);
 
     onStatus('Creating offer…');
     final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});

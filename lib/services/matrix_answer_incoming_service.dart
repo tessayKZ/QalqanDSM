@@ -1,5 +1,4 @@
 import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:matrix/matrix.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -67,7 +66,6 @@ class CallService {
         'audio': {'echoCancellation': true, 'noiseSuppression': true},
         'video': false,
       });
-
             _peerConnection = await createPeerConnection(
                   {
                       'iceServers': [

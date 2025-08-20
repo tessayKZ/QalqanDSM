@@ -1,22 +1,26 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:matrix/matrix.dart' as mx;
 import '../models/room.dart';
 import '../models/message.dart';
 import 'matrix_auth.dart';
 
 class MatrixService {
   static const String _homeServerUrl = 'https://webqalqan.com';
+  static String homeserverBase = 'https://webqalqan.com';
+  static mx.Client get client => AuthService.client!;
+
   static String? _accessToken;
   static String? _fullUserId;
   static String? _nextBatch;
   static Map<String, dynamic>? _lastSyncResponse;
   static bool _syncing = false;
-  static String _localPart(String userId) {
-    return userId.split(':').first.replaceFirst('@', '');
-  }
+
+  static String _localPart(String userId) =>
+      userId.split(':').first.replaceFirst('@', '');
 
   static String? get accessToken => _accessToken;
-
   static String get homeServer => _homeServerUrl;
 
   static String? get userId => _fullUserId;
@@ -61,7 +65,6 @@ class MatrixService {
   static Future<void> forceSync({int timeout = 5000}) async {
     if (_accessToken == null) return;
 
-    // собираем параметр since, если есть предыдущая точка синка
     final sinceParam = _nextBatch != null
         ? '&since=${Uri.encodeComponent(_nextBatch!)}'
         : '';
@@ -198,16 +201,68 @@ class MatrixService {
         isUtc: true,
       ).toLocal();
 
-      if (type.startsWith('m.room.message')) {
-        final body = (e['content'] as Map<String, dynamic>)['body'] as String? ?? '';
-        result.add(Message(
-          id:        eventId,
-          sender:    sender,
-          text:      body,
-          type:      MessageType.text,
-          timestamp: ts,
-        ));
-      }
+          if (type.startsWith('m.room.message')) {
+            final content = (e['content'] as Map<String, dynamic>? ?? const {});
+            final msgtype = (content['msgtype'] as String?) ?? 'm.text';
+            final body    = (content['body'] as String?) ?? '';
+
+            if (msgtype == 'm.text') {
+              result.add(Message(
+                id: eventId,
+                sender: sender,
+                text: body,
+                type: MessageType.text,
+                timestamp: ts,
+              ));
+              continue;
+            }
+
+            if (msgtype == 'm.image') {
+              final mxcUrl   = content['url'] as String?;
+              final info     = (content['info'] as Map?)?.cast<String, dynamic>();
+              final thumbMxc = info?['thumbnail_url'] as String?;
+              final mime     = (info?['mimetype'] as String?) ?? 'image/*';
+              final size     = (info?['size'] as num?)?.toInt();
+              final mediaUrl = mxcToHttp(mxcUrl);
+              final thumbUrl = mxcToHttp(thumbMxc, width: 512, height: 512, thumbnail: true);
+
+              result.add(Message(
+                id: eventId,
+                sender: sender,
+                text: body,
+                type: MessageType.image,
+                timestamp: ts,
+                mediaUrl: mediaUrl,
+                thumbUrl: thumbUrl ?? mediaUrl,
+                fileName: body.isNotEmpty ? body : null,
+                fileSize: size,
+                mimeType: mime,
+              ));
+              continue;
+            }
+
+            if (msgtype == 'm.file') {
+              final mxcUrl = content['url'] as String?;
+              final info   = (content['info'] as Map?)?.cast<String, dynamic>();
+              final mime   = (info?['mimetype'] as String?) ?? 'application/octet-stream';
+              final size   = (info?['size'] as num?)?.toInt();
+              final name   = body.isNotEmpty ? body : (content['filename'] as String?) ?? 'file';
+              final mediaUrl = mxcToHttp(mxcUrl);
+
+              result.add(Message(
+                id: eventId,
+                sender: sender,
+                text: name,
+                type: MessageType.file,
+                timestamp: ts,
+                mediaUrl: mediaUrl,
+                fileName: name,
+                fileSize: size,
+                mimeType: mime,
+              ));
+              continue;
+            }
+          }
 
       if (type.startsWith('m.call.') && type != 'm.call.candidates') {
         String callText;
@@ -229,36 +284,26 @@ class MatrixService {
     return result;
   }
 
-  static Future<String?> sendMessage(String roomId, String text) async {
-    if (_accessToken == null) return null;
+  static Future<String?> sendMessage(String roomId, String text, {String? txnId}) async {
+    final txn = txnId ?? DateTime.now().millisecondsSinceEpoch.toString();
 
-    final txnId = DateTime.now().millisecondsSinceEpoch.toString();
     final uri = Uri.parse(
-      '$_homeServerUrl/_matrix/client/r0/rooms/$roomId/send/m.room.message/$txnId',
+      '$_homeServerUrl/_matrix/client/r0/rooms/$roomId/send/m.room.message/$txn',
     );
-    final payload = jsonEncode({
-      'msgtype': 'm.text',
-      'body': text,
-    });
+    final payload = jsonEncode({'msgtype': 'm.text', 'body': text});
 
     final response = await http.put(
       uri,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $_accessToken',
-      },
+      headers: {'Content-Type': 'application/json','Authorization': 'Bearer $_accessToken'},
       body: payload,
     );
 
     if (response.statusCode == 200 || response.statusCode == 201) {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final eventId = data['event_id'] as String?;
-
-      return eventId;
-    } else {
-      print('sendMessage failed ${response.statusCode}: ${response.body}');
-      return null;
+      return data['event_id'] as String?;
     }
+    print('sendMessage failed ${response.statusCode}: ${response.body}');
+    return null;
   }
 
   static Future<List<Message>> fetchRoomHistory(String roomId) async {
@@ -333,18 +378,23 @@ class MatrixService {
       }
       return null;
     }
+        final byId = <String, Map<String, dynamic>>{};
+        for (final raw in olderRaw.reversed) {
+          final id = raw['event_id'] as String?;
+          if (id != null && id.isNotEmpty) byId[id] = raw;
+        }
+        for (final raw in initialTimeline) {
+          final id = raw['event_id'] as String?;
+          if (id != null && id.isNotEmpty) byId[id] = raw;
+        }
 
-    final all = <Message>[];
-    for (var raw in olderRaw.reversed) {
-      final m = convert(raw);
-      if (m != null) all.add(m);
-    }
-
-    for (var raw in initialTimeline) {
-      final m = convert(raw);
-      if (m != null) all.add(m);
-    }
-    return all;
+        final all = <Message>[];
+        for (final raw in byId.values) {
+          final m = convert(raw);
+          if (m != null) all.add(m);
+        }
+        all.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        return all;
   }
 
   static Future<bool> userExists(String userId) async {
@@ -471,5 +521,63 @@ class MatrixService {
     );
     print('DEBUG setDirectRooms → ${resp.statusCode}: ${resp.body}');
     return resp.statusCode == 200;
+  }
+
+  static String? mxcToHttp(String? mxc, {int? width, int? height, bool thumbnail = false}) {
+    if (mxc == null || !mxc.startsWith('mxc://')) return null;
+    final noScheme = mxc.substring('mxc://'.length);
+    final parts = noScheme.split('/');
+    if (parts.length < 2) return null;
+    final server = parts[0];
+    final mediaId = parts.sublist(1).join('/');
+
+    if (thumbnail && width != null && height != null) {
+      return '$homeserverBase/_matrix/media/v3/thumbnail/$server/$mediaId'
+          '?width=$width&height=$height&method=scale';
+    }
+    return '$homeserverBase/_matrix/media/v3/download/$server/$mediaId';
+  }
+
+  static Future<String?> sendFile(String roomId, String name, List<int> bytes, String mime) async {
+    final room = client.getRoomById(roomId);
+    if (room == null) return null;
+
+    final uri = await client.uploadContent(
+      Uint8List.fromList(bytes),
+      contentType: mime,
+      filename: name,
+    );
+
+    final content = {
+      'msgtype': 'm.file',
+      'body': name,
+      'filename': name,
+      'url': uri,
+      'info': {'mimetype': mime, 'size': bytes.length},
+    };
+
+    final resp = await room.sendEvent(content, type: 'm.room.message');
+    return resp;
+  }
+
+  static Future<String?> sendImage(String roomId, String name, List<int> bytes, String mime) async {
+    final room = client.getRoomById(roomId);
+    if (room == null) return null;
+
+    final uri = await client.uploadContent(
+      Uint8List.fromList(bytes),
+      contentType: mime,
+      filename: name,
+    );
+
+    final content = {
+      'msgtype': 'm.image',
+      'body': name,
+      'url': uri,
+      'info': {'mimetype': mime, 'size': bytes.length},
+    };
+
+    final resp = await room.sendEvent(content, type: 'm.room.message');
+    return resp;
   }
 }

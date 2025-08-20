@@ -3,6 +3,10 @@ import '../services/matrix_auth.dart';
 import '../services/matrix_chat_service.dart';
 import 'chat_list_page.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
+import '../services/matrix_sync_service.dart';
+import 'package:matrix/matrix.dart' as mx;
+import '../services/matrix_incoming_call_service.dart';
+import 'package:qalqan_dsm/services/call_store.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -68,6 +72,16 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     if (sdkOk && chatOk) {
       AuthDataCall.instance.login = user;
       AuthDataCall.instance.password = password;
+
+      final mx.Client client = MatrixService.client;
+      final myUserId = MatrixService.userId ?? AuthService.userId ?? user;
+          await CallStore.saveMyUserId(myUserId);
+
+      MatrixSyncService.instance.attachClient(client);
+      MatrixSyncService.instance.start();
+
+      final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
+      callSvc.start();
 
       if (mounted) {
         Navigator.of(context).pushReplacement(
