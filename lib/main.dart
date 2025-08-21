@@ -7,6 +7,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
 import 'ui/login_page.dart';
+import 'ui/splash_gate.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
@@ -100,9 +101,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
-      home: const LoginPage(),
+      home: const SplashGate(),
     );
   }
 }
-// Сделать авторизацию пользователя один раз, как в whats app/telegram, чтобы не приходилось
-// постоянно входить по учётными данными пользователя matrix-synapse сервер

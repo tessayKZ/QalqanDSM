@@ -7,6 +7,7 @@ import '../services/matrix_sync_service.dart';
 import 'package:matrix/matrix.dart' as mx;
 import '../services/matrix_incoming_call_service.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
+import '../services/cred_store.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
@@ -46,17 +47,62 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     super.dispose();
   }
 
+  Future<void> _tryAutoLogin() async {
+    setState(() => _isLoading = true);
+    try {
+      final creds = await CredStore.load();
+      if (creds == null) {
+        if (mounted) setState(() => _isLoading = false);
+        return;
+      }
+
+      final sdkOk = await AuthService.login(user: creds.user, password: creds.password);
+      final chatOk = await MatrixService.login(user: creds.user, password: creds.password);
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      if (sdkOk && chatOk) {
+        AuthDataCall.instance.login = creds.user;
+        AuthDataCall.instance.password = creds.password;
+
+        final mx.Client client = MatrixService.client;
+        final myUserId = MatrixService.userId ?? AuthService.userId ?? creds.user;
+        await CallStore.saveMyUserId(myUserId);
+
+        MatrixSyncService.instance.attachClient(client);
+        MatrixSyncService.instance.start();
+
+        final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
+        callSvc.start();
+
+        if (!mounted) return;
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const ChatListPage()),
+        );
+      } else {
+        await CredStore.clear();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorText = 'Auto-login failed';
+        });
+      }
+    }
+  }
+
   Future<void> _doLogin() async {
     final user = _userController.text.trim();
     final password = _passwordController.text.trim();
 
     if (user.isEmpty || password.isEmpty) {
-      setState(() {
-        _errorText = 'Please fill in both fields';
-      });
+      setState(() => _errorText = 'Please fill in both fields');
       return;
     }
 
+    FocusScope.of(context).unfocus();
     setState(() {
       _isLoading = true;
       _errorText = null;
@@ -65,17 +111,18 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
     final sdkOk = await AuthService.login(user: user, password: password);
     final chatOk = await MatrixService.login(user: user, password: password);
 
-    setState(() {
-      _isLoading = false;
-    });
+    if (!mounted) return;
+    setState(() => _isLoading = false);
 
     if (sdkOk && chatOk) {
       AuthDataCall.instance.login = user;
       AuthDataCall.instance.password = password;
 
+      await CredStore.save(user: user, password: password);
+
       final mx.Client client = MatrixService.client;
       final myUserId = MatrixService.userId ?? AuthService.userId ?? user;
-          await CallStore.saveMyUserId(myUserId);
+      await CallStore.saveMyUserId(myUserId);
 
       MatrixSyncService.instance.attachClient(client);
       MatrixSyncService.instance.start();
@@ -83,15 +130,12 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
       callSvc.start();
 
-      if (mounted) {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(builder: (_) => ChatListPage()),
-        );
-      }
+      if (!mounted) return;
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(builder: (_) => const ChatListPage()),
+      );
     } else {
-      setState(() {
-        _errorText = 'Login failed. Check your credentials.';
-      });
+      setState(() => _errorText = 'Login failed. Check your credentials.');
     }
   }
 
@@ -103,7 +147,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       body: Stack(
         children: [
           Container(
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               image: DecorationImage(
                 image: AssetImage('assets/background.png'),
                 fit: BoxFit.cover,
@@ -150,18 +194,11 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Image.asset(
-                          'assets/logo.png',
-                          width: 80,
-                          height: 80,
-                        ),
+                        Image.asset('assets/logo.png', width: 80, height: 80),
                         const SizedBox(height: 16),
                         Text(
                           'QalqanDSM',
-                          style: Theme.of(context)
-                              .textTheme
-                              .titleLarge
-                              ?.copyWith(color: Colors.black87),
+                          style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.black87),
                         ),
                         const SizedBox(height: 24),
                         TextField(
@@ -196,10 +233,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                           const SizedBox(height: 12),
                           Text(
                             _errorText!,
-                            style: const TextStyle(
-                              color: Colors.redAccent,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
                           ),
                         ],
                         const SizedBox(height: 24),
@@ -212,20 +246,13 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
                               backgroundColor: const Color(0xFF6A11CB),
                               foregroundColor: Colors.white,
                               elevation: 8,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),
                             child: _isLoading
-                                ? const CircularProgressIndicator(
-                              valueColor: AlwaysStoppedAnimation(Colors.white),
-                            )
+                                ? const CircularProgressIndicator(valueColor: AlwaysStoppedAnimation(Colors.white))
                                 : const Text(
                               'Log In',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w600,
-                              ),
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ),

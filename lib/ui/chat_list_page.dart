@@ -12,6 +12,7 @@ import 'chat_detail_page.dart';
 import 'add_users_page.dart';
 import 'package:matrix/matrix.dart' as mx;
 import '../services/matrix_sync_service.dart';
+import 'user_menu_button.dart';
 
 class ChatListPage extends StatefulWidget {
   const ChatListPage({Key? key}) : super(key: key);
@@ -256,6 +257,7 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const UserMenuButton(),
         title: const Text('Chats'),
         centerTitle: true,
         elevation: 0,
