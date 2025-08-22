@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:matrix/matrix.dart' as mx;
 import '../services/cred_store.dart';
 import '../services/matrix_auth.dart';
@@ -9,6 +10,7 @@ import 'package:qalqan_dsm/services/auth_data.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
 import 'chat_list_page.dart';
 import 'login_page.dart';
+import '../services/matrix_push.dart';
 
 class SplashGate extends StatefulWidget {
   const SplashGate({super.key});
@@ -48,8 +50,21 @@ class _SplashGateState extends State<SplashGate> {
         MatrixSyncService.instance.attachClient(client);
         MatrixSyncService.instance.start();
 
-        final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
-        callSvc.start();
+                MatrixCallService.init(client, MatrixService.userId ?? '');
+
+            final token = await FirebaseMessaging.instance.getToken();
+            if (token != null) {
+              await MatrixPush.registerPusher(
+                fcmToken: token,
+                deviceDisplayName: AuthService.deviceId ?? 'Android',
+              );
+            }
+            FirebaseMessaging.instance.onTokenRefresh.listen((t) {
+              MatrixPush.registerPusher(
+                fcmToken: t,
+                deviceDisplayName: AuthService.deviceId ?? 'Android',
+              );
+            });
 
         _go(const ChatListPage());
       } else {

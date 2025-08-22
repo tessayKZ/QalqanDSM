@@ -14,7 +14,7 @@ class OutgoingAudioCallPage extends StatefulWidget {
 }
 
 class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
-  late final CallService _callService;
+  late final OutgoingCallService _callService;
 
   bool _muted = false;
   bool _speakerOn = false;
@@ -34,20 +34,28 @@ class _OutgoingAudioCallPageState extends State<OutgoingAudioCallPage> {
   }
 
   Future<void> _initializeCall() async {
-    _remoteRenderer = RTCVideoRenderer()..initialize();
-    _callService = CallService(
-      onStatus: _updateStatus,
-      onAddRemoteStream: (stream) => _remoteRenderer.srcObject = stream,
-    );
+    try {
+      _remoteRenderer = RTCVideoRenderer();
+      await _remoteRenderer.initialize();
 
-    await AudioHelper.setReceiver();
+      _callService = OutgoingCallService(
+        onStatus: _updateStatus,
+        onAddRemoteStream: (stream) => _remoteRenderer.srcObject = stream,
+      );
 
-    _callService.startCall(roomId: widget.roomId).then((_) {
+      await AudioHelper.setReceiver();
+
+      await _callService.startCall(roomId: widget.roomId);
+
+      if (!mounted) return;
+
       setState(() => _muted = false);
-      for (var track in _callService.localStream?.getAudioTracks() ?? []) {
+      for (final track in _callService.localStream?.getAudioTracks() ?? const []) {
         track.enabled = true;
       }
-    });
+    } catch (e) {
+      _updateStatus('Call init failed: $e');
+    }
   }
 
   void _updateStatus(String status) {

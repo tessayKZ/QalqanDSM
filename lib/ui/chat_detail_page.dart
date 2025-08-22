@@ -305,10 +305,21 @@ class _ChatDetailPageState extends State<ChatDetailPage> with WidgetsBindingObse
     final body    = (content['body'] as String?) ?? '';
     final type    = e.type;
 
-        if (type == 'm.room.encrypted' && msgtype == null) {
+    if (type == 'm.room.encrypted') {
+      final int ts = (e.originServerTs is int)
+          ? e.originServerTs as int
+          : int.tryParse('${e.originServerTs}') ??
+          DateTime.now().millisecondsSinceEpoch;
 
-          return null;
-        }
+      return Message(
+        id: e.eventId ?? 'enc_${DateTime.now().millisecondsSinceEpoch}',
+        sender: e.senderId ?? '',
+        text: '🔒 Encrypted message',
+        type: MessageType.text,
+        timestamp: DateTime.fromMillisecondsSinceEpoch(ts),
+      );
+    }
+
 
         final eventId = e.eventId;
         if (eventId == null || eventId.isEmpty) {

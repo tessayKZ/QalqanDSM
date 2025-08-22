@@ -8,8 +8,27 @@ import 'package:qalqan_dsm/services/auth_data.dart';
 import '../main.dart' show navigatorKey;
 import '../ui/incoming_audio_call_page.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
+import 'package:uuid/uuid.dart';
 
 class MatrixCallService {
+
+  MatrixCallService._(this.client, this.currentUserId);
+  static MatrixCallService? _instance;
+
+  static MatrixCallService init(Client client, String userId) {
+    _instance?.dispose();
+    _instance = MatrixCallService._(client, userId)..start();
+    return _instance!;
+  }
+
+  static MatrixCallService get I {
+    if (_instance == null) {
+      throw StateError('MatrixCallService is not initialized. Call init() after login.');
+    }
+    return _instance!;
+  }
+
+
   final Client client;
   final String currentUserId;
 
@@ -20,10 +39,7 @@ class MatrixCallService {
   final Map<String, Map<String, dynamic>> _pendingOffers = {};
   final Map<String, String> _pendingCallerNames = {};
 
-  // де-дуп: чтобы push + timeline не давали двойной CallKit
   final Set<String> _handledCallIds = <String>{};
-
-  MatrixCallService(this.client, this.currentUserId);
 
   void start() {
     _subInvite?.cancel();
@@ -49,12 +65,15 @@ class MatrixCallService {
     final callId = content?['call_id'] as String?;
     if (callId == null || callId.isEmpty) return;
 
+    final uuid = await CallStore.uuidForCallId(callId) ?? callId;
     try {
-      await FlutterCallkitIncoming.endCall(callId);
+      await FlutterCallkitIncoming.endCall(uuid);
     } catch (err, st) {
       debugPrint('CallKit end error: $err\n$st');
     }
-     await CallStore.clear(callId);
+    await CallStore.unmapCallId(callId);
+    await CallStore.clear(callId);
+
     _handledCallIds.add(callId);
     _pendingRooms.remove(callId);
     _pendingOffers.remove(callId);
@@ -72,19 +91,16 @@ class MatrixCallService {
     final callId = (content['call_id'] as String?)?.trim();
     if (callId == null || callId.isEmpty) return;
 
-        if (AuthDataCall.instance.outgoingCallIds.remove(callId)) return;
-        if (await CallStore.isOutgoing(callId)) return;
-        if (await CallStore.alreadyShown(callId)) return;
-
+    if (AuthDataCall.instance.outgoingCallIds.remove(callId)) return;
+    if (await CallStore.isOutgoing(callId)) return;
+    if (await CallStore.alreadyShown(callId)) return;
     if (!_handledCallIds.add(callId)) return;
 
     final offer = content['offer'] as Map<String, dynamic>?;
     if (offer == null) return;
 
     String senderId = '';
-    try {
-      senderId = e.senderId ?? (e.sender as User?)?.id ?? '';
-    } catch (_) {}
+    try { senderId = e.senderId ?? (e.sender as User?)?.id ?? ''; } catch (_) {}
     if (senderId.isEmpty) senderId = 'unknown@server';
 
     final displayName = _extractLocalpart(senderId);
@@ -95,21 +111,24 @@ class MatrixCallService {
     _pendingCallerNames[callId] = displayName;
 
     try {
+      final uuid = const Uuid().v4();
+      await CallStore.mapCallIdToUuid(callId, uuid);
+
+      final active = await FlutterCallkitIncoming.activeCalls();
+      if (active.any((c) => c['id'] == uuid)) return;
+
       await FlutterCallkitIncoming.showCallkitIncoming(
         CallKitParams(
-          id: callId,
+          id: uuid,
           nameCaller: displayName,
           appName: 'QalqanDSM',
           type: 0,
           textAccept: 'Accept',
           textDecline: 'Decline',
-          extra: {
-            'call_id': callId,
-            'room_id': roomId,
-            'sender': senderId,
-          },
+          extra: {'call_id': callId, 'room_id': roomId, 'sender': senderId},
         ),
       );
+
       await CallStore.markShown(callId);
     } catch (err, st) {
       debugPrint('CallKit show error: $err\n$st');

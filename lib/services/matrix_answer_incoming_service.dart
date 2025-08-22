@@ -4,9 +4,13 @@ import 'package:matrix/matrix.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:qalqan_dsm/services/auth_data.dart';
+import 'package:qalqan_dsm/services/matrix_auth.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
+import 'package:qalqan_dsm/services/call_store.dart';
 
-class CallService {
+class IncomingCallService {
   String? _roomId;
+  StreamSubscription<EventUpdate>? _onEventSub;
   final void Function(String status) onStatus;
   final void Function(MediaStream stream) onAddRemoteStream;
 
@@ -17,114 +21,130 @@ class CallService {
   final List<RTCIceCandidate> _iceQueue = [];
 
   Client get matrixClient => _matrixClient!;
-
   MediaStream? get localStream => _localStream;
 
-  CallService({
+  IncomingCallService({
     required this.onStatus,
     required this.onAddRemoteStream,
   });
 
-  Future<void> startCall({ required String roomId }) async {
-    _roomId = roomId;
-    const homeserver = 'https://webqalqan.com';
-
-    if (_matrixClient != null) {
-      await _matrixClient!.logout().catchError((_) {});
-      _matrixClient!.dispose();
-      _matrixClient = null;
-    }
-    final micStatus = await Permission.microphone.request();
-    if (!micStatus.isGranted) {
-      onStatus('Microphone permission denied');
-      return;
-    }
-
-    final client = Client('CallServiceClient');
-    _matrixClient = client;
+  Future<void> startCall({required String roomId}) async {
     try {
-      await client.init();
-      await client.checkHomeserver(Uri.parse(homeserver));
-      final login = await client.login(
-        LoginType.mLoginPassword,
-        identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
-        password: AuthDataCall.instance.password,
-      );
-      _loggedInUserId = login.userId;
-      onStatus('Logged in as $_loggedInUserId');
+      _roomId = roomId;
 
-      final room = client.getRoomById(roomId);
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        onStatus('Microphone permission denied');
+        return;
+      }
+
+      if (AuthService.client == null || AuthService.userId == null) {
+        onStatus('Not signed in');
+        return;
+      }
+      _matrixClient = AuthService.client;
+      _loggedInUserId = AuthService.userId;
+
+      _onEventSub?.cancel();
+      _onEventSub = _matrixClient!.onEvent.stream.listen(
+        _handleEvent,
+        onError: (e) => debugPrint('Event stream error: $e'),
+      );
+
+      final room = _matrixClient!.getRoomById(roomId);
       if (room == null) {
         onStatus('Room not found: $roomId');
         return;
       }
-
-      startSyncLoop();
 
       onStatus('Accessing local media...');
       _localStream = await navigator.mediaDevices.getUserMedia({
         'audio': {'echoCancellation': true, 'noiseSuppression': true},
         'video': false,
       });
-            _peerConnection = await createPeerConnection(
-                  {
-                      'iceServers': [
-                      {'urls': 'stun:stun.l.google.com:19302'},
-                      {
-                          'urls': 'turn:webqalqan.com:3478',
-                          'username': 'turnuser',
-                          'credential': 'turnpass',
-                      },
-                    ],
-                'sdpSemantics': 'unified-plan',
-              },
-              {},
-                );
-      _localStream!.getTracks().forEach((t) => _peerConnection?.addTrack(t, _localStream!));
 
-            _peerConnection!.onTrack = (RTCTrackEvent event) {
-                if (event.streams.isNotEmpty) {
-                  onAddRemoteStream(event.streams[0]);
-                }
-              };
+      _peerConnection = await createPeerConnection(
+        {
+          'iceServers': [
+            {'urls': 'stun:stun.l.google.com:19302'},
+            {
+              'urls': 'turn:webqalqan.com:3478',
+              'username': 'turnuser',
+              'credential': 'turnpass',
+            },
+            {
+              'urls': 'turns:webqalqan.com:5349?transport=tcp',
+              'username': 'turnuser',
+              'credential': 'turnpass',
+            },
+          ],
+          'sdpSemantics': 'unified-plan',
+        },
+        {},
+      );
 
-      _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
-      _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
+      _peerConnection!.onIceConnectionState = (state) async {
+        if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+            state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+          final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+          if (uuid != null && uuid.isNotEmpty) {
+            try { await FlutterCallkitIncoming.setCallConnected(uuid); } catch (_) {}
+          }
+          onStatus('Connected');
+        }
+      };
+
+      _localStream!.getTracks().forEach(
+            (t) => _peerConnection?.addTrack(t, _localStream!),
+      );
+
+      _peerConnection!.onTrack = (RTCTrackEvent event) {
+        if (event.streams.isNotEmpty) {
+          onAddRemoteStream(event.streams[0]);
+        }
+      };
+
+      _callId =
+      'call_${DateTime.now().millisecondsSinceEpoch}';
+      _partyId =
+      'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
 
       onStatus('Creating offer...');
-      final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
+      final offer =
+      await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
       await _peerConnection!.setLocalDescription(offer);
 
       _peerConnection!.onIceCandidate = (RTCIceCandidate cand) {
         if (cand.candidate != null) _sendIce(roomId, cand);
       };
 
-      _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
+      _peerConnection!.onIceGatheringState =
+          (RTCIceGatheringState state) {
         if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
-
           final body = {
             'call_id': _callId,
             'party_id': _partyId,
             'version': 1,
             'candidates': <dynamic>[],
           };
-          final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-          matrixClient.sendMessage(roomId, 'm.call.candidates', txn, body);
+          final txn =
+              'txn_${DateTime.now().millisecondsSinceEpoch}';
+          matrixClient.sendMessage(
+              roomId, 'm.call.candidates', txn, body);
         }
       };
 
       final invite = {
         'call_id': _callId,
         'lifetime': 60000,
-          'offer': {
-              'type': offer.type,
-              'sdp': offer.sdp
-          },
-      'version': 1,
-    'party_id': _partyId,
+        'offer': {'type': offer.type, 'sdp': offer.sdp},
+        'version': 1,
+        'party_id': _partyId,
       };
       final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-      await client.sendMessage(roomId, 'm.call.invite', txn, invite);
+      await _matrixClient!
+          .sendMessage(roomId, 'm.call.invite', txn, invite);
+
       AuthDataCall.instance.outgoingCallIds.add(_callId!);
       onStatus('Connecting…');
     } on MatrixException catch (e) {
@@ -154,7 +174,6 @@ class CallService {
     }
   }
 
-
   Future<void> _handleAnswer(dynamic content) async {
     final data = content as Map<String, dynamic>?;
     if (data == null || data['call_id'] != _callId) return;
@@ -162,8 +181,12 @@ class CallService {
     final sdp = answer?['sdp'] as String?;
     final type = answer?['type'] as String?;
     if (sdp != null && type != null) {
-      await _peerConnection?.setRemoteDescription(RTCSessionDescription(sdp, type));
-      for (var c in _iceQueue) await _peerConnection?.addCandidate(c);
+      await _peerConnection?.setRemoteDescription(
+        RTCSessionDescription(sdp, type),
+      );
+      for (var c in _iceQueue) {
+        await _peerConnection?.addCandidate(c);
+      }
       _iceQueue.clear();
       onStatus('Connected');
     }
@@ -179,7 +202,8 @@ class CallService {
       final idx = it['sdpMLineIndex'] as int?;
       if (cand != null && mid != null && idx != null) {
         final ice = RTCIceCandidate(cand, mid, idx);
-        final remoteDesc = await _peerConnection?.getRemoteDescription();
+        final remoteDesc =
+        await _peerConnection?.getRemoteDescription();
         if (remoteDesc == null) {
           _iceQueue.add(ice);
         } else {
@@ -204,111 +228,107 @@ class CallService {
       ],
     };
     final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-    await matrixClient.sendMessage(roomId, 'm.call.candidates', txn, body);
-  }
-
-  bool _disposed = false;
-  String? _sinceToken;
-
-    void startSyncLoop() {
-        _matrixClient!.onEvent.stream
-               .listen(_handleEvent, onError: (err) => onStatus('Sync error: $err'));
-        _runSyncLoop();
-      }
-
-  Future<void> _runSyncLoop() async {
-    while (!_disposed) {
-      try {
-        final resp = await _matrixClient!.sync(
-          since: _sinceToken,
-          timeout: 30000,
-        );
-        _sinceToken = resp.nextBatch;
-      } catch (e) {
-        debugPrint('Sync loop error: $e');
-        await Future.delayed(Duration(seconds: 1));
-      }
-    }
+    await matrixClient.sendMessage(
+        roomId, 'm.call.candidates', txn, body);
   }
 
   Future<void> hangup() async {
     if (_matrixClient != null && _callId != null && _roomId != null) {
-      final body = {'call_id': _callId, 'version': '1'};
-      final txn  = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-      await _matrixClient!.sendMessage(
-          _roomId!, 'm.call.hangup', txn, body
-      );
+      final body = {'call_id': _callId, 'version': 1};
+      final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
+      await _matrixClient!.sendMessage(_roomId!, 'm.call.hangup', txn, body);
+    }
+    final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+    if (uuid != null && uuid.isNotEmpty) {
+      await FlutterCallkitIncoming.endCall(uuid);
+    }
+    if (_callId != null) {
+      await CallStore.unmapCallId(_callId!);
     }
     onStatus('Call ended');
     _peerConnection?.close();
     _localStream?.dispose();
+    await _onEventSub?.cancel();
+    _onEventSub = null;
   }
 
   Future<void> dispose() async {
-    _disposed = true;
-    if (_matrixClient != null) {
-      await _matrixClient!.logout().catchError((_) {});
-      _matrixClient!.dispose();
-      _matrixClient = null;
-      _peerConnection?.close();
-      _localStream?.dispose();
-    }
+    _peerConnection?.close();
+    await _localStream?.dispose();
+    await _onEventSub?.cancel();
+    _onEventSub = null;
   }
 }
 
-extension CallServiceAnswer on CallService {
+extension IncomingCallServiceAnswer on IncomingCallService {
   Future<void> answerCall({
     required String roomId,
     required String callId,
     required Map<String, dynamic> offer,
   }) async {
     _callId = callId;
-    const homeserver = 'https://webqalqan.com';
+    _roomId = roomId;
 
-        onStatus('Logging in...');
-        _matrixClient?.dispose();
-        _matrixClient = Client('AnswerServiceClient');
-        await _matrixClient!.init();
-        await _matrixClient!.checkHomeserver(Uri.parse(homeserver));
-        final login = await _matrixClient!.login(
-          LoginType.mLoginPassword,
-          identifier: AuthenticationUserIdentifier(user: AuthDataCall.instance.login),
-          password: AuthDataCall.instance.password,
-        );
-        _loggedInUserId = login.userId;
-    final answerClient = _matrixClient!;
-    startSyncLoop();
-    _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
+    onStatus('Preparing client...');
+    if (AuthService.client == null || AuthService.userId == null) {
+      onStatus('Not signed in');
+      return;
+    }
+    _matrixClient = AuthService.client;
+    _loggedInUserId = AuthService.userId;
+
+    _partyId =
+    'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
+
     onStatus('Accessing local media...');
     final mic = await Permission.microphone.request();
     if (!mic.isGranted) {
       onStatus('Microphone denied');
       return;
     }
+
     _localStream = await navigator.mediaDevices.getUserMedia({
       'audio': {'echoCancellation': true, 'noiseSuppression': true},
       'video': false,
     });
 
-        _peerConnection = await createPeerConnection(
-              {
-                  'iceServers': [
-                  {'urls': 'stun:stun.l.google.com:19302'},
-                  {
-                      'urls': 'turn:webqalqan.com:3478',
-                      'username': 'turnuser',
-                      'credential': 'turnpass',
-                  },
-                ],
-            'sdpSemantics': 'unified-plan',
+    _peerConnection = await createPeerConnection(
+      {
+        'iceServers': [
+          {'urls': 'stun:stun.l.google.com:19302'},
+          {
+            'urls': 'turn:webqalqan.com:3478',
+            'username': 'turnuser',
+            'credential': 'turnpass',
           },
-          {},
-            );
-    _localStream!.getTracks().forEach((t) => _peerConnection!.addTrack(t, _localStream!));
+          {
+            'urls': 'turns:webqalqan.com:5349?transport=tcp',
+            'username': 'turnuser',
+            'credential': 'turnpass',
+          },
+        ],
+        'sdpSemantics': 'unified-plan',
+      },
+      {},
+    );
 
-        final localClient = _matrixClient!;
-        final localRoomId = roomId;
-        final localPartyId = _partyId!;
+    _peerConnection!.onIceConnectionState = (state) async {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+        if (uuid != null && uuid.isNotEmpty) {
+          try { await FlutterCallkitIncoming.setCallConnected(uuid); } catch (_) {}
+        }
+      }
+    };
+
+    _localStream!.getTracks().forEach(
+          (t) => _peerConnection!.addTrack(t, _localStream!),
+    );
+
+    final localClient = _matrixClient!;
+    final localRoomId = roomId;
+    final localPartyId = _partyId!;
 
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       if (event.streams.isNotEmpty) {
@@ -317,29 +337,30 @@ extension CallServiceAnswer on CallService {
       }
     };
 
-        _peerConnection!.onIceCandidate = (RTCIceCandidate? c) async {
-            if (c == null) return;
-            final iceBody = {
-              'call_id': callId,
-              'party_id': localPartyId,
-              'version': 1,
-              'candidates': [
-                {
-                  'candidate': c.candidate,
-                  'sdpMid': c.sdpMid,
-                  'sdpMLineIndex': c.sdpMLineIndex,
-                }
-              ],
-            };
-            await localClient.sendMessage(
-              localRoomId,
-              'm.call.candidates',
-              'txn_${DateTime.now().millisecondsSinceEpoch}',
-              iceBody,
-            );
-          };
+    _peerConnection!.onIceCandidate = (RTCIceCandidate? c) async {
+      if (c == null) return;
+      final iceBody = {
+        'call_id': callId,
+        'party_id': localPartyId,
+        'version': 1,
+        'candidates': [
+          {
+            'candidate': c.candidate,
+            'sdpMid': c.sdpMid,
+            'sdpMLineIndex': c.sdpMLineIndex,
+          }
+        ],
+      };
+      await localClient.sendMessage(
+        localRoomId,
+        'm.call.candidates',
+        'txn_${DateTime.now().millisecondsSinceEpoch}',
+        iceBody,
+      );
+    };
 
-    _peerConnection!.onIceGatheringState = (RTCIceGatheringState state) {
+    _peerConnection!.onIceGatheringState =
+        (RTCIceGatheringState state) {
       if (state == RTCIceGatheringState.RTCIceGatheringStateComplete) {
         final body = {
           'call_id': callId,
@@ -348,17 +369,22 @@ extension CallServiceAnswer on CallService {
           'candidates': <dynamic>[],
         };
         final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-        matrixClient.sendMessage(roomId, 'm.call.candidates', txn, body);
+        _matrixClient!.sendMessage(
+            roomId, 'm.call.candidates', txn, body);
       }
     };
 
     onStatus('Setting remote SDP...');
     await _peerConnection!.setRemoteDescription(
-      RTCSessionDescription(offer['sdp'] as String, offer['type'] as String),
+      RTCSessionDescription(
+        offer['sdp'] as String,
+        offer['type'] as String,
+      ),
     );
 
     onStatus('Creating answer...');
-    final answer = await _peerConnection!.createAnswer({'offerToReceiveAudio': 1});
+    final answer =
+    await _peerConnection!.createAnswer({'offerToReceiveAudio': 1});
     await _peerConnection!.setLocalDescription(answer);
 
     final localDesc = await _peerConnection!.getLocalDescription();
@@ -372,7 +398,7 @@ extension CallServiceAnswer on CallService {
           'sdp': localDesc.sdp,
         },
       };
-      await matrixClient.sendMessage(
+      await _matrixClient!.sendMessage(
         roomId,
         'm.call.answer',
         'txn_${DateTime.now().millisecondsSinceEpoch}',

@@ -9,6 +9,9 @@ import 'package:flutter_callkit_incoming/entities/call_kit_params.dart';
 import 'ui/login_page.dart';
 import 'ui/splash_gate.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
+import 'package:flutter_callkit_incoming/entities/call_event.dart';
+import 'services/matrix_incoming_call_service.dart';
+import 'package:uuid/uuid.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -16,7 +19,6 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
-
     final data = message.data;
     final eventType = data['type'] ?? data['event_type'];
 
@@ -24,27 +26,18 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       final callId = data['call_id'] ?? data['callId'];
       final roomId = data['room_id'] ?? data['roomId'];
       final sender = data['sender'] ?? 'unknown';
-      final name = _extractLocalpart(sender);
+      final name   = _extractLocalpart(sender);
 
-        final myId = await CallStore.loadMyUserId();
-        if (callId is String && callId.isNotEmpty) {
-          if (myId != null && sender == myId) {
-            await CallStore.markShown(callId);
-            return;
-          }
-          if (await CallStore.isOutgoing(callId)) {
-            await CallStore.markShown(callId);
-            return;
-          }
-          if (await CallStore.alreadyShown(callId)) {
-            return;
-          }
-        }
+      if (callId is String && callId.isNotEmpty) {
+        final uuid = const Uuid().v4();
+        await CallStore.mapCallIdToUuid(callId, uuid);
 
-      if (callId != null && callId.isNotEmpty) {
+        final active = await FlutterCallkitIncoming.activeCalls();
+        if (active.any((c) => c['id'] == uuid)) return;
+
         await FlutterCallkitIncoming.showCallkitIncoming(
           CallKitParams(
-            id: callId,
+            id: uuid,
             nameCaller: name,
             appName: 'QalqanDSM',
             type: 0,
@@ -57,7 +50,10 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     } else if (eventType == 'm.call.hangup') {
       final callId = data['call_id'] ?? data['callId'];
       if (callId != null && callId.isNotEmpty) {
-        await FlutterCallkitIncoming.endCall(callId);
+
+        final uuid = await CallStore.uuidForCallId(callId) ?? callId;
+        await FlutterCallkitIncoming.endCall(uuid);
+        await CallStore.unmapCallId(callId);
       }
     }
   } catch (e, st) {
@@ -73,13 +69,8 @@ String _extractLocalpart(String mxid) {
 }
 
 Future<void> _postBootInit() async {
-  await Firebase.initializeApp();
-
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-
   final fcm = FirebaseMessaging.instance;
   await fcm.requestPermission();
-
   FirebaseMessaging.onMessage.listen((msg) {
     debugPrint('FCM foreground: ${msg.data}');
   });
@@ -87,10 +78,47 @@ Future<void> _postBootInit() async {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
   runApp(const MyApp());
-
   unawaited(_postBootInit());
+
+  FlutterCallkitIncoming.onEvent.listen((e) async {
+    if (e == null) return;
+
+    final ev = e.event;
+    final uuid = e.body?['id'] as String?;
+    final extra = (e.body?['extra'] as Map?)?.cast<String, dynamic>();
+    final callId = extra?['call_id'] as String?;
+
+    switch (ev) {
+      case Event.actionCallAccept:
+        if (callId != null && uuid != null) {
+          final mapped = await CallStore.uuidForCallId(callId);
+          if (mapped == null) {
+            await CallStore.mapCallIdToUuid(callId, uuid);
+          }
+          try {
+            MatrixCallService.I.handleCallkitAccept(callId);
+          } catch (_) {}
+        }
+        break;
+
+      case Event.actionCallDecline:
+      case Event.actionCallEnded:
+      case Event.actionCallTimeout:
+        if (uuid != null) {
+          await FlutterCallkitIncoming.endCall(uuid);
+        }
+        if (callId != null) {
+          await CallStore.unmapCallId(callId);
+        }
+        break;
+
+      default:
+        break;
+    }
+});
 }
 
 class MyApp extends StatelessWidget {

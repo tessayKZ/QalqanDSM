@@ -189,9 +189,11 @@ class MatrixService {
       Map<String, dynamic>? lastMsg;
       final timelineEvents = roomData['timeline']?['events'] as List<dynamic>?;
       if (timelineEvents != null && timelineEvents.isNotEmpty) {
-        lastMsg = (timelineEvents.lastWhere(
-              (e) => ((e as Map<String, dynamic>)['type'] as String)
-              .startsWith('m.room.message'),
+        lastMsg = (timelineEvents.reversed.firstWhere(
+              (e) {
+            final t = ((e as Map<String, dynamic>)['type'] as String?) ?? '';
+            return t == 'm.room.message' || t == 'm.room.encrypted' || t.startsWith('m.call.');
+              },
           orElse: () => null,
         ) as Map<String, dynamic>?);
       }
@@ -210,104 +212,172 @@ class MatrixService {
     if (roomSection == null) return [];
 
     final events = (roomSection['timeline']?['events'] as List?)
-        ?.cast<Map<String, dynamic>>() ?? [];
+        ?.cast<Map<String, dynamic>>() ??
+        [];
 
     events.sort((a, b) =>
-        (a['origin_server_ts'] as int)
-            .compareTo(b['origin_server_ts'] as int)
-    );
+        ((a['origin_server_ts'] as int?) ?? 0).compareTo((b['origin_server_ts'] as int?) ?? 0));
 
     final List<Message> result = [];
+
+    final myId = _fullUserId ?? '';
+    final Map<String, Map<String, dynamic>> callInvites = {};
+    final Map<String, Map<String, dynamic>> callAnswers = {};
+    final Map<String, Map<String, dynamic>> callHangups = {};
+
+    String _fmtDur(int ms) {
+      if (ms <= 0) return '00:00';
+      final d = Duration(milliseconds: ms);
+      final mm = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+      final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return '$mm:$ss';
+    }
 
     for (var e in events) {
       final type = e['type'] as String? ?? '';
       final sender = e['sender'] as String? ?? '';
       final eventId = e['event_id'] as String? ?? '';
       final ts = DateTime.fromMillisecondsSinceEpoch(
-        e['origin_server_ts'] as int? ?? 0,
+        (e['origin_server_ts'] as int?) ?? 0,
         isUtc: true,
       ).toLocal();
 
-          if (type.startsWith('m.room.message')) {
-            final content = (e['content'] as Map<String, dynamic>? ?? const {});
-            final msgtype = (content['msgtype'] as String?) ?? 'm.text';
-            final body    = (content['body'] as String?) ?? '';
+      if (type.startsWith('m.room.message')) {
+        final content = (e['content'] as Map<String, dynamic>? ?? const {});
+        final msgtype = (content['msgtype'] as String?) ?? 'm.text';
+        final body = (content['body'] as String?) ?? '';
 
-            if (msgtype == 'm.text') {
-              result.add(Message(
-                id: eventId,
-                sender: sender,
-                text: body,
-                type: MessageType.text,
-                timestamp: ts,
-              ));
-              continue;
-            }
+        if (msgtype == 'm.text') {
+          result.add(Message(
+            id: eventId,
+            sender: sender,
+            text: body,
+            type: MessageType.text,
+            timestamp: ts,
+          ));
+          continue;
+        }
 
-            if (msgtype == 'm.image') {
-              final mxcUrl   = content['url'] as String?;
-              final info     = (content['info'] as Map?)?.cast<String, dynamic>();
-              final thumbMxc = info?['thumbnail_url'] as String?;
-              final mime     = (info?['mimetype'] as String?) ?? 'image/*';
-              final size     = (info?['size'] as num?)?.toInt();
-              final mediaUrl = mxcToHttp(mxcUrl);
-              final thumbUrl = mxcToHttp(thumbMxc, width: 512, height: 512, thumbnail: true);
+        if (msgtype == 'm.image') {
+          final mxcUrl = content['url'] as String?;
+          final info = (content['info'] as Map?)?.cast<String, dynamic>();
+          final thumbMxc = info?['thumbnail_url'] as String?;
+          final mime = (info?['mimetype'] as String?) ?? 'image/*';
+          final size = (info?['size'] as num?)?.toInt();
+          final mediaUrl = mxcToHttp(mxcUrl);
+          final thumbUrl = mxcToHttp(thumbMxc, width: 512, height: 512, thumbnail: true);
 
-              result.add(Message(
-                id: eventId,
-                sender: sender,
-                text: body,
-                type: MessageType.image,
-                timestamp: ts,
-                mediaUrl: mediaUrl,
-                thumbUrl: thumbUrl ?? mediaUrl,
-                fileName: body.isNotEmpty ? body : null,
-                fileSize: size,
-                mimeType: mime,
-              ));
-              continue;
-            }
+          result.add(Message(
+            id: eventId,
+            sender: sender,
+            text: body,
+            type: MessageType.image,
+            timestamp: ts,
+            mediaUrl: mediaUrl,
+            thumbUrl: thumbUrl ?? mediaUrl,
+            fileName: body.isNotEmpty ? body : null,
+            fileSize: size,
+            mimeType: mime,
+          ));
+          continue;
+        }
 
-            if (msgtype == 'm.file') {
-              final mxcUrl = content['url'] as String?;
-              final info   = (content['info'] as Map?)?.cast<String, dynamic>();
-              final mime   = (info?['mimetype'] as String?) ?? 'application/octet-stream';
-              final size   = (info?['size'] as num?)?.toInt();
-              final name   = body.isNotEmpty ? body : (content['filename'] as String?) ?? 'file';
-              final mediaUrl = mxcToHttp(mxcUrl);
+        if (msgtype == 'm.file') {
+          final mxcUrl = content['url'] as String?;
+          final info = (content['info'] as Map?)?.cast<String, dynamic>();
+          final mime = (info?['mimetype'] as String?) ?? 'application/octet-stream';
+          final size = (info?['size'] as num?)?.toInt();
+          final name = body.isNotEmpty ? body : (content['filename'] as String?) ?? 'file';
+          final mediaUrl = mxcToHttp(mxcUrl);
 
-              result.add(Message(
-                id: eventId,
-                sender: sender,
-                text: name,
-                type: MessageType.file,
-                timestamp: ts,
-                mediaUrl: mediaUrl,
-                fileName: name,
-                fileSize: size,
-                mimeType: mime,
-              ));
-              continue;
-            }
-          }
+          result.add(Message(
+            id: eventId,
+            sender: sender,
+            text: name,
+            type: MessageType.file,
+            timestamp: ts,
+            mediaUrl: mediaUrl,
+            fileName: name,
+            fileSize: size,
+            mimeType: mime,
+          ));
+          continue;
+        }
+      }
 
-      if (type.startsWith('m.call.') && type != 'm.call.candidates') {
-        String callText;
-        if (type == 'm.call.invite')      callText = '📞 Звонок: приглашение';
-        else if (type == 'm.call.answer') callText = '📞 Звонок: ответ';
-        else if (type == 'm.call.hangup') callText = '📞 Звонок завершён';
-        else                               callText = '📞 Событие звонка ($type)';
-
+      if (type == 'm.room.encrypted') {
         result.add(Message(
-          id:        eventId,
-          sender:    sender,
-          text:      callText,
-          type:      MessageType.call,
+          id: eventId,
+          sender: sender,
+          text: '🔒 Encrypted message',
+          type: MessageType.text,
           timestamp: ts,
         ));
+        continue;
+      }
+
+      if (type.startsWith('m.call.') && type != 'm.call.candidates') {
+        final content = (e['content'] as Map?)?.cast<String, dynamic>() ?? const {};
+        final callId = content['call_id'] as String?;
+        if (callId != null && callId.isNotEmpty) {
+          if (type == 'm.call.invite') {
+            callInvites[callId] = e;
+          } else if (type == 'm.call.answer') {
+            callAnswers[callId] = e;
+          } else if (type == 'm.call.hangup') {
+            callHangups[callId] = e;
+          }
+        }
+        continue;
       }
     }
 
+    for (final entry in callInvites.entries) {
+      final callId = entry.key;
+      final inv = entry.value;
+      final ans = callAnswers[callId];
+      final han = callHangups[callId];
+
+      final inviter = inv['sender'] as String? ?? '';
+      final incoming = inviter != myId;
+
+      final inviteTs = (inv['origin_server_ts'] as int?) ?? 0;
+      final answerTs = (ans?['origin_server_ts'] as int?);
+      final hangupTs = (han?['origin_server_ts'] as int?);
+
+      late final DateTime stamp;
+      if (hangupTs != null) {
+        stamp = DateTime.fromMillisecondsSinceEpoch(hangupTs, isUtc: true).toLocal();
+      } else if (answerTs != null) {
+        stamp = DateTime.fromMillisecondsSinceEpoch(answerTs, isUtc: true).toLocal();
+      } else {
+        stamp = DateTime.fromMillisecondsSinceEpoch(inviteTs, isUtc: true).toLocal();
+      }
+
+      String text;
+      if (answerTs != null) {
+        final end = hangupTs ?? answerTs;
+        final durMs = (end - answerTs).clamp(0, 1 << 30);
+        final dur = _fmtDur((durMs is int) ? durMs : (durMs as num).toInt());
+        text = incoming
+            ? '📥 Incoming call, $dur'
+            : '📤 Outgoing call, $dur';
+      } else {
+        text = incoming
+            ? '📵 Missed incoming call'
+            : '🚫 Outgoing (no answer)';
+      }
+
+      result.add(Message(
+        id: 'call_$callId',
+        sender: inviter,
+        text: text,
+        type: MessageType.call,
+        timestamp: stamp,
+      ));
+    }
+
+    result.sort((a, b) => a.timestamp.compareTo(b.timestamp));
     return result;
   }
 
@@ -347,8 +417,8 @@ class MatrixService {
         [];
 
     String? prevBatch = roomSection['timeline']?['prev_batch'] as String?;
-
     final olderRaw = <Map<String, dynamic>>[];
+
     if (prevBatch != null && prevBatch.isNotEmpty) {
       var from = prevBatch;
       const pageSize = 50;
@@ -371,57 +441,174 @@ class MatrixService {
       }
     }
 
-    Message? convert(Map<String, dynamic> e) {
+    final rawAll = <Map<String, dynamic>>[
+      ...olderRaw,
+      ...initialTimeline,
+    ];
+    rawAll.sort((a, b) =>
+        ((a['origin_server_ts'] as int?) ?? 0).compareTo((b['origin_server_ts'] as int?) ?? 0));
+
+    final myId = _fullUserId ?? '';
+    final List<Message> out = [];
+
+    final Map<String, Map<String, dynamic>> callInvites = {};
+    final Map<String, Map<String, dynamic>> callAnswers = {};
+    final Map<String, Map<String, dynamic>> callHangups = {};
+
+    String _fmtDur(int ms) {
+      if (ms <= 0) return '00:00';
+      final d = Duration(milliseconds: ms);
+      final mm = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+      final ss = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+      return '$mm:$ss';
+    }
+
+    for (final e in rawAll) {
       final type = e['type'] as String? ?? '';
+      final sender = e['sender'] as String? ?? '';
       final eventId = e['event_id'] as String? ?? '';
       final ts = DateTime.fromMillisecondsSinceEpoch(
-        e['origin_server_ts'] as int? ?? 0,
+        (e['origin_server_ts'] as int?) ?? 0,
         isUtc: true,
       ).toLocal();
 
-      if (type.startsWith('m.room.message')) {
-        return Message(
-          id:        eventId,
-          sender:    e['sender'] as String? ?? '',
-          text:      (e['content'] as Map)['body'] as String? ?? '',
-          type:      MessageType.text,
-          timestamp: ts,
-        );
-      }
       if (type.startsWith('m.call.') && type != 'm.call.candidates') {
-        String txt;
-        if (type == 'm.call.invite')    txt = '📞 Звонок приглашение';
-        else if (type == 'm.call.answer') txt = '📞 Звонок ответ';
-        else if (type == 'm.call.hangup') txt = '📞 Звонок завершён';
-        else                              txt = '📞 Событие звонка';
-
-        return Message(
-          id:        eventId,
-          sender:    e['sender'] as String? ?? '',
-          text:      txt,
-          type:      MessageType.call,
-          timestamp: ts,
-        );
+        final content = (e['content'] as Map?)?.cast<String, dynamic>() ?? const {};
+        final callId = content['call_id'] as String?;
+        if (callId != null && callId.isNotEmpty) {
+          if (type == 'm.call.invite') {
+            callInvites[callId] = e;
+          } else if (type == 'm.call.answer') {
+            callAnswers[callId] = e;
+          } else if (type == 'm.call.hangup') {
+            callHangups[callId] = e;
+          }
+        }
+        continue;
       }
-      return null;
-    }
-        final byId = <String, Map<String, dynamic>>{};
-        for (final raw in olderRaw.reversed) {
-          final id = raw['event_id'] as String?;
-          if (id != null && id.isNotEmpty) byId[id] = raw;
-        }
-        for (final raw in initialTimeline) {
-          final id = raw['event_id'] as String?;
-          if (id != null && id.isNotEmpty) byId[id] = raw;
+
+      if (type.startsWith('m.room.message')) {
+        final content = (e['content'] as Map<String, dynamic>? ?? const {});
+        final msgtype = (content['msgtype'] as String?) ?? 'm.text';
+        final body = (content['body'] as String?) ?? '';
+
+        if (msgtype == 'm.text') {
+          out.add(Message(
+            id: eventId,
+            sender: sender,
+            text: body,
+            type: MessageType.text,
+            timestamp: ts,
+          ));
+          continue;
         }
 
-        final all = <Message>[];
-        for (final raw in byId.values) {
-          final m = convert(raw);
-          if (m != null) all.add(m);
+        if (msgtype == 'm.image') {
+          final mxcUrl = content['url'] as String?;
+          final info = (content['info'] as Map?)?.cast<String, dynamic>();
+          final thumbMxc = info?['thumbnail_url'] as String?;
+          final mime = (info?['mimetype'] as String?) ?? 'image/*';
+          final size = (info?['size'] as num?)?.toInt();
+          final mediaUrl = mxcToHttp(mxcUrl);
+          final thumbUrl = mxcToHttp(thumbMxc, width: 512, height: 512, thumbnail: true);
+
+          out.add(Message(
+            id: eventId,
+            sender: sender,
+            text: body,
+            type: MessageType.image,
+            timestamp: ts,
+            mediaUrl: mediaUrl,
+            thumbUrl: thumbUrl ?? mediaUrl,
+            fileName: body.isNotEmpty ? body : null,
+            fileSize: size,
+            mimeType: mime,
+          ));
+          continue;
         }
-        all.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-        return all;
+
+        if (msgtype == 'm.file') {
+          final mxcUrl = content['url'] as String?;
+          final info = (content['info'] as Map?)?.cast<String, dynamic>();
+          final mime = (info?['mimetype'] as String?) ?? 'application/octet-stream';
+          final size = (info?['size'] as num?)?.toInt();
+          final name = body.isNotEmpty ? body : (content['filename'] as String?) ?? 'file';
+          final mediaUrl = mxcToHttp(mxcUrl);
+
+          out.add(Message(
+            id: eventId,
+            sender: sender,
+            text: name,
+            type: MessageType.file,
+            timestamp: ts,
+            mediaUrl: mediaUrl,
+            fileName: name,
+            fileSize: size,
+            mimeType: mime,
+          ));
+          continue;
+        }
+      }
+
+      if (type == 'm.room.encrypted') {
+        out.add(Message(
+          id: eventId,
+          sender: sender,
+          text: '🔒 Encrypted message',
+          type: MessageType.text,
+          timestamp: ts,
+        ));
+        continue;
+      }
+    }
+
+    for (final entry in callInvites.entries) {
+      final callId = entry.key;
+      final inv = entry.value;
+      final ans = callAnswers[callId];
+      final han = callHangups[callId];
+
+      final inviter = inv['sender'] as String? ?? '';
+      final incoming = inviter != myId;
+
+      final inviteTs = (inv['origin_server_ts'] as int?) ?? 0;
+      final answerTs = (ans?['origin_server_ts'] as int?);
+      final hangupTs = (han?['origin_server_ts'] as int?);
+
+      late final DateTime stamp;
+      if (hangupTs != null) {
+        stamp = DateTime.fromMillisecondsSinceEpoch(hangupTs, isUtc: true).toLocal();
+      } else if (answerTs != null) {
+        stamp = DateTime.fromMillisecondsSinceEpoch(answerTs, isUtc: true).toLocal();
+      } else {
+        stamp = DateTime.fromMillisecondsSinceEpoch(inviteTs, isUtc: true).toLocal();
+      }
+
+      String text;
+      if (answerTs != null) {
+        final end = hangupTs ?? answerTs;
+        final durMs = (end - answerTs).clamp(0, 1 << 30);
+        final dur = _fmtDur((durMs is int) ? durMs : (durMs as num).toInt());
+        text = incoming
+            ? '📥 Incoming call, $dur'
+            : '📤 Outgoing call, $dur';
+      } else {
+        text = incoming
+            ? '📵 Missed incoming call'
+            : '🚫 Outgoing (no answer)';
+      }
+
+      out.add(Message(
+        id: 'call_$callId',
+        sender: inviter,
+        text: text,
+        type: MessageType.call,
+        timestamp: stamp,
+      ));
+    }
+
+    out.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    return out;
   }
 
   static Future<bool> userExists(String userId) async {
@@ -497,7 +684,6 @@ class MatrixService {
     });
     return map;
   }
-
 
   static List<String> getDirectRoomIds() {
     Map<String, dynamic>? content;

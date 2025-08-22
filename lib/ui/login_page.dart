@@ -73,8 +73,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
         MatrixSyncService.instance.attachClient(client);
         MatrixSyncService.instance.start();
 
-        final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
-        callSvc.start();
+        MatrixCallService.init(client, MatrixService.userId ?? '');
 
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
@@ -127,8 +126,7 @@ class _LoginPageState extends State<LoginPage> with SingleTickerProviderStateMix
       MatrixSyncService.instance.attachClient(client);
       MatrixSyncService.instance.start();
 
-      final callSvc = MatrixCallService(client, MatrixService.userId ?? '');
-      callSvc.start();
+      MatrixCallService.init(client, MatrixService.userId ?? '');
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

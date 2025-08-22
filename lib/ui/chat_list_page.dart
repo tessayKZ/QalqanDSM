@@ -2,10 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
-import 'package:flutter_callkit_incoming/entities/call_event.dart';
-import '../services/matrix_auth.dart';
-import '../services/matrix_incoming_call_service.dart';
 import '../services/matrix_chat_service.dart';
 import '../models/room.dart';
 import 'chat_detail_page.dart';
@@ -29,7 +25,6 @@ class _ChatListPageState extends State<ChatListPage> with WidgetsBindingObserver
   bool _rebuilding = false;
   bool _didInitialSync = false;
 
-  late final MatrixCallService _callSvc;
   bool _loading = true;
   List<Room> _peopleRooms = [];
   List<Room> _groupRooms = [];
@@ -40,23 +35,16 @@ class _ChatListPageState extends State<ChatListPage> with WidgetsBindingObserver
     super.initState();
     WidgetsBinding.instance.addObserver(this);
 
-    _callSvc = MatrixCallService(
-      AuthService.client!,
-      AuthService.userId!,
-    );
-    _requestPermissions();
-    _callSvc.start();
-    _listenCallEvents();
-    MatrixSyncService.instance.attachClient(AuthService.client!);
-    MatrixSyncService.instance.start();
-    _initialLoad();
-    _startLiveSync();
+        _requestPermissions();
+        _initialLoad();
+        _startLiveSync();
 
     _subAll = MatrixSyncService.instance.events.listen((ev) {
       if (ev.type == 'm.room.member' ||
           ev.type == 'm.room.create' ||
           ev.type == 'm.room.name'   ||
           ev.type == 'm.room.message'||
+          ev.type == 'm.room.encrypted' ||
           ev.type.startsWith('m.call.')) {
         _rebuildFromSync();
       }
@@ -160,16 +148,6 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
     await _silentRefresh();
   }
 
-  void _listenCallEvents() {
-    FlutterCallkitIncoming.onEvent.listen((CallEvent? e) {
-      if (e == null) return;
-      final ev = e.event;
-      final callId = e.body?['id'];
-      if (ev == Event.actionCallAccept) _callSvc.handleCallkitAccept(callId);
-      if (ev == Event.actionCallDecline) FlutterCallkitIncoming.endCall(callId);
-    });
-  }
-
   Future<void> _requestPermissions() async {
     if (Platform.isAndroid) {
       await Permission.systemAlertWindow.request();
@@ -194,18 +172,25 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
         ),
         title: Text(room.name,
             style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: () {
-              final ev = room.lastMessage;
-              if (ev == null) return null;
-              final sender = (ev['sender'] as String?) ?? '';
-              final body   = ((ev['content'] as Map?)?['body'] as String?) ?? '';
-              final who    = sender.isNotEmpty ? sender.split(':').first : '';
-              return Text(
-                (who.isNotEmpty ? '$who: ' : '') + body,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              );
-            }(),
+          subtitle: () {
+          final ev = room.lastMessage;
+          if (ev == null) return null;
+
+          final type = (ev['type'] as String?) ?? '';
+          if (type == 'm.room.encrypted') {
+            return const Text('🔒 Зашифрованное сообщение',
+                maxLines: 1, overflow: TextOverflow.ellipsis);
+          }
+
+          final sender = (ev['sender'] as String?) ?? '';
+          final body   = ((ev['content'] as Map?)?['body'] as String?) ?? '';
+          final who    = sender.isNotEmpty ? sender.split(':').first : '';
+          return Text(
+            (who.isNotEmpty ? '$who: ' : '') + body,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          );
+        }(),
 
         trailing: PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert),
@@ -243,15 +228,13 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
     );
   }
 
-  @override
-  void dispose() {
-  WidgetsBinding.instance.removeObserver(this);
-  _subAll?.cancel();
-  _stopLiveSync();
-  MatrixService.stopSyncLoop();
-  _callSvc.dispose();
-  super.dispose();
-  }
+    @override
+    void dispose() {
+        WidgetsBinding.instance.removeObserver(this);
+        _subAll?.cancel();
+        _stopLiveSync();
+        super.dispose();
+      }
 
   @override
   Widget build(BuildContext context) {

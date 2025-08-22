@@ -6,10 +6,11 @@ import 'package:permission_handler/permission_handler.dart';
 import '../services/auth_data.dart';
 import '../services/matrix_auth.dart';
 import 'package:qalqan_dsm/services/call_store.dart';
+import 'package:flutter_callkit_incoming/flutter_callkit_incoming.dart';
 
-class CallService {
-    final void Function(String status) onStatus;
-    final void Function(MediaStream stream) onAddRemoteStream;
+class OutgoingCallService {
+  final void Function(String status) onStatus;
+  final void Function(MediaStream stream) onAddRemoteStream;
 
   Client? _matrixClient;
   String? _loggedInUserId;
@@ -19,43 +20,36 @@ class CallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
+  StreamSubscription<EventUpdate>? _onEventSub;
 
   MediaStream? get localStream => _localStream;
 
-  CallService({
+  OutgoingCallService({
     required this.onStatus,
     required this.onAddRemoteStream,
   });
 
-  Future<void> startCall({ required String roomId }) async {
+  Future<void> startCall({required String roomId}) async {
     _roomId = roomId;
+
     onStatus('Requesting microphone…');
     if (!await Permission.microphone.request().isGranted) {
       onStatus('Microphone denied');
       return;
     }
 
-    onStatus('Logging in call client…');
-    final auth = AuthDataCall.instance;
-    if (auth.login.isEmpty || auth.password.isEmpty) {
-      onStatus('No credentials for call service');
-      return;
-    }
-    final ok = await AuthService.login(user: auth.login, password: auth.password);
-    if (!ok || AuthService.client == null || AuthService.userId == null) {
-      onStatus('Call login failed');
+    if (AuthService.client == null || AuthService.userId == null) {
+      onStatus('Not signed in');
       return;
     }
     _matrixClient = AuthService.client;
     _loggedInUserId = AuthService.userId;
-    onStatus('Logged in as $_loggedInUserId');
 
-    _matrixClient!
-        .sync()
-        .catchError((e) => debugPrint('Sync error: $e'));
-    _matrixClient!.onEvent.stream.listen(_handleEvent, onError: (e) {
-      debugPrint('Event stream error: $e');
-    });
+    _onEventSub?.cancel();
+    _onEventSub = _matrixClient!.onEvent.stream.listen(
+      _handleEvent,
+      onError: (e) => debugPrint('Event stream error: $e'),
+    );
 
     onStatus('Accessing local media…');
     _localStream = await navigator.mediaDevices.getUserMedia({
@@ -63,38 +57,58 @@ class CallService {
       'video': false,
     });
 
-        onStatus('Creating PeerConnection…');
-        final iceConfig = {
-          'iceServers': [
-            {'urls': 'stun:stun.l.google.com:19302'},
-            {
-              'urls': 'turn:webqalqan.com:3478',
-              'username': 'turnuser',
-              'credential': 'turnpass',
-            },
-          ],
-        };
-        _peerConnection = await createPeerConnection(
-          iceConfig,
-          {'sdpSemantics': 'unified-plan'},
-        );
+    onStatus('Creating PeerConnection…');
+
+    final configuration = {
+      'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+        {
+          'urls': 'turn:webqalqan.com:3478',
+          'username': 'turnuser',
+          'credential': 'turnpass',
+        },
+        {
+          'urls': 'turns:webqalqan.com:5349?transport=tcp',
+          'username': 'turnuser',
+          'credential': 'turnpass',
+        },
+      ],
+      'sdpSemantics': 'unified-plan',
+    };
+
+    _peerConnection = await createPeerConnection(configuration, {});
+    _peerConnection!.onIceConnectionState = (state) async {
+      if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
+        final uuid = await CallStore.uuidForCallId(_callId ?? '');
+        if (uuid != null && uuid.isNotEmpty) {
+          try {
+            await FlutterCallkitIncoming.setCallConnected(uuid);
+          } catch (_) {}
+        }
+        onStatus('Connected');
+      }
+    };
 
     _peerConnection!.onTrack = (RTCTrackEvent event) {
-        if (event.track.kind == 'audio' && event.streams.isNotEmpty) {
-          onAddRemoteStream(event.streams[0]);
-        }
-      };
-    _localStream!.getAudioTracks().forEach((track) {
-        _peerConnection!.addTrack(track, _localStream!);
-      });
+      if (event.track.kind == 'audio' && event.streams.isNotEmpty) {
+        onAddRemoteStream(event.streams[0]);
+      }
+    };
+    _localStream!.getAudioTracks().forEach(
+          (track) => _peerConnection!.addTrack(track, _localStream!),
+    );
 
-    _callId = 'call_${DateTime.now().millisecondsSinceEpoch}';
-    _partyId = 'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
+    _callId =
+    'call_${DateTime.now().millisecondsSinceEpoch}';
+    _partyId =
+    'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
     AuthDataCall.instance.outgoingCallIds.add(_callId!);
     await CallStore.markOutgoing(_callId!);
 
     onStatus('Creating offer…');
-    final offer = await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
+    final offer =
+    await _peerConnection!.createOffer({'offerToReceiveAudio': 1});
     await _peerConnection!.setLocalDescription(offer);
 
     _peerConnection!.onIceCandidate = (cand) {
@@ -106,7 +120,7 @@ class CallService {
     final invite = {
       'call_id': _callId,
       'party_id': _partyId,
-      'version': '1',
+      'version': 1,
       'lifetime': 60000,
       'offer': {'type': offer.type, 'sdp': offer.sdp},
     };
@@ -145,7 +159,9 @@ class CallService {
     final type = answer['type'] as String?;
     if (sdp == null || type == null) return;
 
-    await _peerConnection?.setRemoteDescription(RTCSessionDescription(sdp, type));
+    await _peerConnection?.setRemoteDescription(
+      RTCSessionDescription(sdp, type),
+    );
 
     for (var ice in _iceQueue) {
       await _peerConnection?.addCandidate(ice);
@@ -183,7 +199,7 @@ class CallService {
     final body = {
       'call_id': _callId,
       'party_id': _partyId,
-      'version': '1',
+      'version': 1,
       'candidates': [
         {
           'candidate': c.candidate,
@@ -193,30 +209,35 @@ class CallService {
       ],
     };
     final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-    await _matrixClient!.sendMessage(roomId, 'm.call.candidates', txn, body);
+    await _matrixClient!
+        .sendMessage(roomId, 'm.call.candidates', txn, body);
   }
 
-    Future<void> hangup() async {
-      if (_matrixClient != null && _callId != null && _roomId != null) {
-            final body = {
-              'call_id': _callId,
-              'party_id': _partyId,
-              'version': '1',
-            };
-        final txn  = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-        await _matrixClient!.sendMessage(
-            _roomId!, 'm.call.hangup', txn, body
-        );
-      }
-      onStatus('Call ended');
-      _peerConnection?.close();
-      _localStream?.dispose();
+  Future<void> hangup() async {
+    try {
+      for (final t in _localStream?.getTracks() ?? const []) { await t.stop(); }
+      await _localStream?.dispose();
+    } catch (_) {}
+    try { await _peerConnection?.close(); } catch (_) {}
+
+    final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+    if (uuid != null && uuid.isNotEmpty) {
+      await FlutterCallkitIncoming.endCall(uuid);
     }
+    if (_callId != null) {
+      await CallStore.unmapCallId(_callId!);
+      await CallStore.removeOutgoing(_callId!);
+    }
+    onStatus('Call ended');
+  }
+
+
 
   Future<void> dispose() async {
-    await _matrixClient?.logout().catchError((_) {});
-    _matrixClient?.dispose();
-    _peerConnection?.close();
-    _localStream?.dispose();
+    await _onEventSub?.cancel();
+    try { for (final t in _localStream?.getTracks() ?? const []) { await t.stop(); } } catch (_) {}
+    try { await _localStream?.dispose(); } catch (_) {}
+    try { await _peerConnection?.close(); } catch (_) {}
   }
+
 }

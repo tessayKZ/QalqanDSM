@@ -5,8 +5,35 @@ class CallStore {
   static const _kMyUserId = 'callstore_my_user_id';
   static const _kOutgoing = 'callstore_outgoing_ids';
   static const _kShown = 'callstore_shown_ids';
-
+  static const _kIdMap = 'callstore_callid_uuid_map';
   static const _storage = FlutterSecureStorage();
+
+  static Future<Map<String, String>> _readMap() async {
+    final raw = await _storage.read(key: _kIdMap);
+    if (raw == null || raw.isEmpty) return <String, String>{};
+    return Map<String, String>.from(jsonDecode(raw));
+  }
+
+  static Future<void> _writeMap(Map<String, String> map) async {
+    await _storage.write(key: _kIdMap, value: jsonEncode(map));
+  }
+
+  static Future<void> mapCallIdToUuid(String callId, String uuid) async {
+    final m = await _readMap();
+    m[callId] = uuid;
+    await _writeMap(m);
+  }
+
+  static Future<String?> uuidForCallId(String callId) async {
+    final m = await _readMap();
+    return m[callId];
+  }
+
+  static Future<void> unmapCallId(String callId) async {
+    final m = await _readMap();
+    m.remove(callId);
+    await _writeMap(m);
+  }
 
   static Future<void> saveMyUserId(String userId) async {
     await _storage.write(key: _kMyUserId, value: userId);
