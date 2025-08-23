@@ -23,54 +23,53 @@ class _AddUsersPageState extends State<AddUsersPage> {
     }
 
     setState(() => _isLoading = true);
+    try {
+      final exists = await MatrixService.userExists(login);
+      if (!exists) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('User not found on server')),
+        );
+        return;
+      }
 
-    final exists = await MatrixService.userExists(login);
-    if (!exists) {
-      setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('User not found on server')),
+      final Room? newRoom = await MatrixService.createDirectChat(login);
+      if (newRoom == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to create chat')),
+        );
+        return;
+      }
+
+      final roomToUser = MatrixService.getDirectRoomIdToUserIdMap();
+      final Map<String, List<String>> directContent = {};
+      roomToUser.forEach((roomId, userId) {
+        directContent.putIfAbsent(userId, () => []).add(roomId);
+      });
+
+      final host  = Uri.parse(MatrixService.homeServer).host;
+      final userId = login.startsWith('@') ? login : '@$login:$host';
+      directContent.update(
+        userId,
+            (list) => list..add(newRoom.id),
+        ifAbsent: () => [newRoom.id],
       );
-      return;
+
+      final ok = await MatrixService.setDirectRooms(directContent);
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Warning: couldn’t update direct rooms')),
+        );
+        return;
+      }
+
+      await MatrixService.forceSync(timeout: 0);
+
+      if (!mounted) return;
+      Navigator.of(context).pop(newRoom);
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
 
-    final Room? newRoom = await MatrixService.createDirectChat(login);
-    setState(() => _isLoading = false);
-
-    if (newRoom == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to create chat')),
-      );
-      return;
-    }
-
-    final roomToUser = MatrixService.getDirectRoomIdToUserIdMap();
-
-    final Map<String, List<String>> directContent = {};
-    roomToUser.forEach((roomId, userId) {
-      directContent.putIfAbsent(userId, () => []).add(roomId);
-    });
-
-    final host = Uri
-        .parse(MatrixService.homeServer)
-        .host;
-    final userId = login.startsWith('@') ? login : '@$login:$host';
-    directContent.update(
-      userId,
-          (list) => list..add(newRoom.id),
-      ifAbsent: () => [newRoom.id],
-    );
-
-    final ok = await MatrixService.setDirectRooms(directContent);
-    setState(() => _isLoading = false);
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Warning: couldn’t update direct rooms')),
-      );
-      return;
-    }
-
-    await MatrixService.syncOnce();
-    Navigator.of(context).pop(newRoom);
   }
 
   @override

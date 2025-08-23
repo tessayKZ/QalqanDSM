@@ -110,10 +110,6 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
 
       final List<Room> groups = all.where((r) => !directIds.contains(r.id)).toList();
 
-      if (!force && people.isEmpty && groups.isEmpty) {
-        return;
-      }
-
       final changed = force
           || !_sameRooms(_peopleRooms, people)
           || !_sameRooms(_groupRooms, groups);
@@ -254,7 +250,6 @@ void didChangeAppLifecycleState(AppLifecycleState state) {
                 MaterialPageRoute(builder: (_) => const AddUsersPage()),
               );
               if (newRoom != null) {
-                await MatrixService.syncOnce();
                 await _rebuildFromSync(force: true);
                 if (!mounted) return;
                 Navigator.of(context).push(

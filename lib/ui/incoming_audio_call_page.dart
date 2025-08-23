@@ -78,13 +78,13 @@ class _AudioCallPageState extends State<AudioCallPage> {
   }
 
   void _updateStatus(String status) {
-    if ((status == 'Connected' || status == 'Connection established') && !_stopwatch.isRunning) {
+    if (status == 'Connected' && !_stopwatch.isRunning) {
       _stopwatch.start();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => setState(() {}));
       return;
     }
 
-    if (status == 'Call ended' || status == 'Disconnected') {
+    if (status == 'Call ended' || status == 'Answered on another device') {
       _stopwatch.stop();
       _finalDuration = _stopwatch.elapsed;
 

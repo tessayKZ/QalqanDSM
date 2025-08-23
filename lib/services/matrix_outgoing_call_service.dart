@@ -12,6 +12,7 @@ class OutgoingCallService {
   final void Function(String status) onStatus;
   final void Function(MediaStream stream) onAddRemoteStream;
 
+  bool _ended = false;
   Client? _matrixClient;
   String? _loggedInUserId;
   String? _callId;
@@ -20,7 +21,7 @@ class OutgoingCallService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
   final List<RTCIceCandidate> _iceQueue = [];
-  StreamSubscription<EventUpdate>? _onEventSub;
+  StreamSubscription<Event>? _onEventSub;
 
   MediaStream? get localStream => _localStream;
 
@@ -46,10 +47,32 @@ class OutgoingCallService {
     _loggedInUserId = AuthService.userId;
 
     _onEventSub?.cancel();
-    _onEventSub = _matrixClient!.onEvent.stream.listen(
-      _handleEvent,
-      onError: (e) => debugPrint('Event stream error: $e'),
-    );
+    _onEventSub = _matrixClient!.onTimelineEvent.stream.listen((e) async {
+      if (_roomId != null && e.roomId != _roomId) return;
+
+      final type = e.type;
+      final content = e.content;
+
+      try {
+        if (type == 'm.call.answer') {
+          await _handleAnswer(content);
+        } else if (type == 'm.call.candidates') {
+          await _handleCandidates(content);
+        } else if (type == 'm.call.hangup') {
+          final m = (content as Map?)?.cast<String, dynamic>();
+          if (m?['call_id'] == _callId) {
+            await _finish();
+          }
+        } else if (type == 'm.call.select_answer') {
+          final m = (content as Map?)?.cast<String, dynamic>() ?? const {};
+          final selected = m['selected_party_id'] as String?;
+          if (selected != null && selected != _partyId) {
+          }
+        }
+      } catch (e) {
+        debugPrint('Error handling event: $e');
+      }
+    });
 
     onStatus('Accessing local media…');
     _localStream = await navigator.mediaDevices.getUserMedia({
@@ -77,16 +100,25 @@ class OutgoingCallService {
     };
 
     _peerConnection = await createPeerConnection(configuration, {});
+    _peerConnection!.onConnectionState = (RTCPeerConnectionState s) {
+      if (s == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          s == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+          s == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+        onStatus('Disconnected');
+      }
+    };
     _peerConnection!.onIceConnectionState = (state) async {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
         final uuid = await CallStore.uuidForCallId(_callId ?? '');
         if (uuid != null && uuid.isNotEmpty) {
-          try {
-            await FlutterCallkitIncoming.setCallConnected(uuid);
-          } catch (_) {}
+          try { await FlutterCallkitIncoming.setCallConnected(uuid); } catch (_) {}
         }
         onStatus('Connected');
+      } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected ||
+          state == RTCIceConnectionState.RTCIceConnectionStateFailed ||
+          state == RTCIceConnectionState.RTCIceConnectionStateClosed) {
+        onStatus('Disconnected');
       }
     };
 
@@ -113,7 +145,7 @@ class OutgoingCallService {
 
     _peerConnection!.onIceCandidate = (cand) {
       if (cand.candidate != null) {
-        _sendIce(roomId, cand);
+        _sendIce(cand);
       }
     };
 
@@ -124,29 +156,35 @@ class OutgoingCallService {
       'lifetime': 60000,
       'offer': {'type': offer.type, 'sdp': offer.sdp},
     };
-    final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-    await _matrixClient!.sendMessage(roomId, 'm.call.invite', txn, invite);
+    await _sendCallEvent('m.call.invite', invite);
     onStatus('Connecting…');
   }
 
-  void _handleEvent(EventUpdate update) {
+  Future<void> _finish({bool endCallkit = true}) async {
+    if (_ended) return;
+    _ended = true;
     try {
-      final raw = update.content as Map<String, dynamic>;
-      final type = raw['type'] as String?;
-      final content = raw['content'];
+      for (final t in _localStream?.getTracks() ?? const []) { await t.stop(); }
+    } catch (_) {}
+    try { await _localStream?.dispose(); } catch (_) {}
+    try { await _peerConnection?.close(); } catch (_) {}
 
-      if (type == 'm.call.answer') {
-        _handleAnswer(content);
-      } else if (type == 'm.call.candidates') {
-        _handleCandidates(content);
-      } else if (type == 'm.call.hangup') {
-        onStatus('Call ended');
-        _peerConnection?.close();
-        _localStream?.dispose();
+    if (endCallkit) {
+      final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+      if (uuid != null && uuid.isNotEmpty) {
+        try { await FlutterCallkitIncoming.endCall(uuid); } catch (_) {}
       }
-    } catch (e) {
-      debugPrint('Error handling event: $e');
     }
+
+    if (_callId != null) {
+      try { await CallStore.unmapCallId(_callId!); } catch (_) {}
+      try { await CallStore.removeOutgoing(_callId!); } catch (_) {}
+    }
+
+    await _onEventSub?.cancel();
+    _onEventSub = null;
+
+    onStatus('Call ended');
   }
 
   Future<void> _handleAnswer(dynamic content) async {
@@ -167,8 +205,6 @@ class OutgoingCallService {
       await _peerConnection?.addCandidate(ice);
     }
     _iceQueue.clear();
-
-    onStatus('Connected');
   }
 
   Future<void> _handleCandidates(dynamic content) async {
@@ -194,7 +230,7 @@ class OutgoingCallService {
     }
   }
 
-  Future<void> _sendIce(String roomId, RTCIceCandidate c) async {
+  Future<void> _sendIce(RTCIceCandidate c) async {
     if (_matrixClient == null || _callId == null || _partyId == null) return;
     final body = {
       'call_id': _callId,
@@ -208,30 +244,28 @@ class OutgoingCallService {
         }
       ],
     };
-    final txn = 'txn_${DateTime.now().millisecondsSinceEpoch}';
-    await _matrixClient!
-        .sendMessage(roomId, 'm.call.candidates', txn, body);
+    await _sendCallEvent('m.call.candidates', body);
   }
 
   Future<void> hangup() async {
-    try {
-      for (final t in _localStream?.getTracks() ?? const []) { await t.stop(); }
-      await _localStream?.dispose();
-    } catch (_) {}
-    try { await _peerConnection?.close(); } catch (_) {}
-
-    final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
-    if (uuid != null && uuid.isNotEmpty) {
-      await FlutterCallkitIncoming.endCall(uuid);
+    if (_matrixClient != null && _roomId != null && _callId != null) {
+      final body = {
+        'call_id': _callId,
+        'party_id': _partyId,
+        'version': 1,
+        'reason': 'user_hangup',
+      };
+      try { await _sendCallEvent('m.call.hangup', body); } catch (_) {}
     }
-    if (_callId != null) {
-      await CallStore.unmapCallId(_callId!);
-      await CallStore.removeOutgoing(_callId!);
-    }
-    onStatus('Call ended');
+    await _finish();
   }
 
-
+  Future<void> _sendCallEvent(String type, Map<String, dynamic> body) async {
+    if (_matrixClient == null || _roomId == null) return;
+    final room = _matrixClient!.getRoomById(_roomId!);
+    if (room == null) return;
+    await room.sendEvent(body, type: type);
+  }
 
   Future<void> dispose() async {
     await _onEventSub?.cancel();
@@ -239,5 +273,4 @@ class OutgoingCallService {
     try { await _localStream?.dispose(); } catch (_) {}
     try { await _peerConnection?.close(); } catch (_) {}
   }
-
 }

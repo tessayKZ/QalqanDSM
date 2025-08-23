@@ -10,7 +10,7 @@ import 'package:qalqan_dsm/services/call_store.dart';
 
 class IncomingCallService {
   String? _roomId;
-  StreamSubscription<EventUpdate>? _onEventSub;
+  StreamSubscription<Event>? _onEventSub;
   final void Function(String status) onStatus;
   final void Function(MediaStream stream) onAddRemoteStream;
 
@@ -27,6 +27,22 @@ class IncomingCallService {
     required this.onStatus,
     required this.onAddRemoteStream,
   });
+
+  Future<void> _safeFinishFromRemoteHangup() async {
+    onStatus('Call ended');
+    try { await _peerConnection?.close(); } catch (_) {}
+    try { await _localStream?.dispose(); } catch (_) {}
+
+    final uuid = await CallStore.uuidForCallId(_callId ?? '') ?? _callId;
+    if (uuid != null && uuid.isNotEmpty) {
+      try { await FlutterCallkitIncoming.endCall(uuid); } catch (_) {}
+    }
+    if (_callId != null) {
+      try { await CallStore.unmapCallId(_callId!); } catch (_) {}
+    }
+    await _onEventSub?.cancel();
+    _onEventSub = null;
+  }
 
   Future<void> startCall({required String roomId}) async {
     try {
@@ -46,10 +62,32 @@ class IncomingCallService {
       _loggedInUserId = AuthService.userId;
 
       _onEventSub?.cancel();
-      _onEventSub = _matrixClient!.onEvent.stream.listen(
-        _handleEvent,
-        onError: (e) => debugPrint('Event stream error: $e'),
-      );
+      _onEventSub = _matrixClient!.onTimelineEvent.stream.listen((e) async {
+        if (_roomId != null && e.roomId != _roomId) return;
+        final type = e.type;
+        final content = e.content;
+        final m = (content as Map?)?.cast<String, dynamic>() ?? const {};
+        final cid = m['call_id'] as String?;
+        if (_callId != null && cid != null && cid != _callId) return;
+
+        try {
+          if (type == 'm.call.answer') {
+            _handleAnswer(content);
+          } else if (type == 'm.call.candidates') {
+            _handleCandidates(content);
+          } else if (type == 'm.call.select_answer') {
+            final selected = m['selected_party_id'] as String?;
+            if (selected != null && selected != _partyId) {
+              onStatus('Answered on another device');
+              await _safeFinishFromRemoteHangup();
+            }
+          } else if (type == 'm.call.hangup') {
+            _safeFinishFromRemoteHangup();
+          }
+        } catch (e) {
+          debugPrint('Error handling event: $e');
+        }
+      });
 
       final room = _matrixClient!.getRoomById(roomId);
       if (room == null) {
@@ -83,6 +121,10 @@ class IncomingCallService {
         {},
       );
 
+       _peerConnection!.onConnectionState = (RTCPeerConnectionState s) {
+           debugPrint('pc connectionState=$s');
+         };
+
       _peerConnection!.onIceConnectionState = (state) async {
         if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
             state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
@@ -101,6 +143,7 @@ class IncomingCallService {
       _peerConnection!.onTrack = (RTCTrackEvent event) {
         if (event.streams.isNotEmpty) {
           onAddRemoteStream(event.streams[0]);
+          onStatus('Connected');
         }
       };
 
@@ -154,26 +197,6 @@ class IncomingCallService {
     }
   }
 
-  void _handleEvent(EventUpdate update) {
-    try {
-      final raw = update.content as Map<String, dynamic>;
-      final String? type = raw['type'] as String?;
-      final dynamic content = raw['content'];
-
-      if (type == 'm.call.answer') {
-        _handleAnswer(content);
-      } else if (type == 'm.call.candidates') {
-        _handleCandidates(content);
-      } else if (type == 'm.call.hangup') {
-        onStatus('Call ended');
-        _peerConnection?.close();
-        _localStream?.dispose();
-      }
-    } catch (e) {
-      debugPrint('Error handling event: $e');
-    }
-  }
-
   Future<void> _handleAnswer(dynamic content) async {
     final data = content as Map<String, dynamic>?;
     if (data == null || data['call_id'] != _callId) return;
@@ -188,7 +211,6 @@ class IncomingCallService {
         await _peerConnection?.addCandidate(c);
       }
       _iceQueue.clear();
-      onStatus('Connected');
     }
   }
 
@@ -280,6 +302,34 @@ extension IncomingCallServiceAnswer on IncomingCallService {
     _partyId =
     'dart_${_loggedInUserId!.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_')}_${DateTime.now().millisecondsSinceEpoch}';
 
+    _onEventSub?.cancel();
+    _onEventSub = _matrixClient!.onTimelineEvent.stream.listen((e) async {
+      if (_roomId != null && e.roomId != _roomId) return;
+      final type = e.type;
+      final content = e.content;
+      final m = (content as Map?)?.cast<String, dynamic>() ?? const {};
+      final cid = m['call_id'] as String?;
+      if (_callId != null && cid != null && cid != _callId) return;
+
+      try {
+        if (type == 'm.call.answer') {
+          _handleAnswer(content);
+        } else if (type == 'm.call.candidates') {
+          _handleCandidates(content);
+        } else if (type == 'm.call.select_answer') {
+          final selected = m['selected_party_id'] as String?;
+          if (selected != null && selected != _partyId) {
+            onStatus('Answered on another device');
+            await _safeFinishFromRemoteHangup();
+          }
+        } else if (type == 'm.call.hangup') {
+          _safeFinishFromRemoteHangup();
+        }
+      } catch (e) {
+        debugPrint('Error handling event: $e');
+      }
+    });
+
     onStatus('Accessing local media...');
     final mic = await Permission.microphone.request();
     if (!mic.isGranted) {
@@ -312,6 +362,10 @@ extension IncomingCallServiceAnswer on IncomingCallService {
       {},
     );
 
+     _peerConnection!.onConnectionState = (RTCPeerConnectionState s) {
+         debugPrint('pc connectionState=$s');
+       };
+
     _peerConnection!.onIceConnectionState = (state) async {
       if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
           state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
@@ -319,6 +373,7 @@ extension IncomingCallServiceAnswer on IncomingCallService {
         if (uuid != null && uuid.isNotEmpty) {
           try { await FlutterCallkitIncoming.setCallConnected(uuid); } catch (_) {}
         }
+        onStatus('Connected');
       }
     };
 
@@ -404,7 +459,7 @@ extension IncomingCallServiceAnswer on IncomingCallService {
         'txn_${DateTime.now().millisecondsSinceEpoch}',
         ansBody,
       );
-      onStatus('Call accepted');
+      onStatus('Connecting…');
     }
   }
 }

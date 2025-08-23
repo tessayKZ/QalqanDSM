@@ -5,6 +5,7 @@ import 'package:matrix/matrix.dart' as mx;
 import '../models/room.dart';
 import '../models/message.dart';
 import 'matrix_auth.dart';
+import '../services/matrix_sync_service.dart';
 
 class MatrixService {
   static const String _homeServerUrl = 'https://webqalqan.com';
@@ -15,6 +16,7 @@ class MatrixService {
   static String? _accessToken;
   static String? _fullUserId;
   static String? _nextBatch;
+  static String? _myUserId;
   static Map<String, dynamic>? _lastSyncResponse;
   static bool _syncing = false;
 
@@ -49,6 +51,13 @@ class MatrixService {
       _fullUserId = data['user_id'] as String?;
       print('DEBUG: Login successful. user_id=$_fullUserId, token=$_accessToken');
 
+      try {
+        MatrixSyncService.instance.attachClient(client);
+        MatrixSyncService.instance.start();
+      } catch (e) {
+        print('MatrixSyncService start failed: $e');
+      }
+
       await syncOnce();
       return true;
     } else {
@@ -63,7 +72,6 @@ class MatrixService {
     _joinedRoomsSnapshot.clear();
     await _doSync();
   }
-
 
   static Future<void> forceSync({int timeout = 5000}) async {
     if (_accessToken == null) return;
@@ -88,6 +96,10 @@ class MatrixService {
     if (response.statusCode == 200) {
       final decoded = jsonDecode(response.body) as Map<String, dynamic>;
       _applySyncData(decoded);
+
+      if (await _handleDirectInvitesAndMaybeJoin(decoded)) {
+        await forceSync(timeout: 0);
+      }
       print('>>> New next_batch=$_nextBatch');
     } else {
       print('forceSync failed ${response.statusCode}: ${response.body}');
@@ -164,6 +176,97 @@ class MatrixService {
         _mDirectCache = direct['content'] as Map<String, dynamic>?;
       }
     }
+  }
+
+  static Future<bool> _joinRoom(String roomId) async {
+    if (_accessToken == null) return false;
+    final uri = Uri.parse('$_homeServerUrl/_matrix/client/v3/rooms/$roomId/join');
+    final resp = await http.post(
+      uri,
+      headers: {
+        'Authorization': 'Bearer $_accessToken',
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({}),
+    );
+    if (resp.statusCode == 200 || resp.statusCode == 201) return true;
+    print('auto-join failed ${resp.statusCode}: ${resp.body}');
+    return false;
+  }
+
+  static Future<void> _ensureDirectMapping(String otherUserId, String roomId) async {
+    final current = <String, List<String>>{};
+    final events = (_lastSyncResponse?['account_data']?['events'] as List?)
+        ?.cast<Map<String, dynamic>>() ?? [];
+    final directEv = events.firstWhere((e) => e['type'] == 'm.direct', orElse: () => {});
+    final raw = directEv.isNotEmpty
+        ? (directEv['content'] as Map<String, dynamic>?)
+        : _mDirectCache;
+    if (raw != null) {
+      raw.forEach((k, v) {
+        current[k] = (v as List).cast<String>().toList();
+      });
+    }
+
+    final list = current[otherUserId] ?? <String>[];
+    if (!list.contains(roomId)) {
+      list.add(roomId);
+      current[otherUserId] = list;
+      final ok = await setDirectRooms(current);
+      if (!ok) {
+        print('setDirectRooms failed for $otherUserId -> $roomId');
+      }
+    }
+  }
+
+  static Future<bool> _handleDirectInvitesAndMaybeJoin(Map<String, dynamic> decoded) async {
+    if (_accessToken == null) return false;
+
+    final invites = decoded['rooms']?['invite'] as Map<String, dynamic>?;
+    if (invites == null || invites.isEmpty) return false;
+
+    bool anyJoined = false;
+    for (final entry in invites.entries) {
+      final roomId = entry.key;
+      final roomData = (entry.value as Map<String, dynamic>);
+
+      final invEvents = (roomData['invite_state']?['events'] as List?)
+          ?.cast<Map<String, dynamic>>() ?? const <Map<String, dynamic>>[];
+
+      bool isDirect = false;
+      String? inviter;
+      String? otherUserId;
+
+      for (final ev in invEvents) {
+        if (ev['type'] != 'm.room.member') continue;
+
+        final content = (ev['content'] as Map?)?.cast<String, dynamic>() ?? const {};
+        if (content['is_direct'] == true) isDirect = true;
+
+        final membership = content['membership'] as String?;
+        final sender = ev['sender'] as String?;
+        final stateKey = ev['state_key'] as String?;
+        if (membership == 'invite') {
+          inviter = sender;
+          final me = _fullUserId ?? _myUserId;
+          if (me != null) {
+            otherUserId = (sender == me) ? stateKey : sender;
+          }
+        }
+      }
+
+      if (isDirect == true) {
+        final ok = await _joinRoom(roomId);
+        if (ok) {
+          anyJoined = true;
+          if (otherUserId != null && otherUserId!.isNotEmpty) {
+            await _ensureDirectMapping(otherUserId!, roomId);
+          }
+        }
+      }
+    }
+
+    return anyJoined;
   }
 
   static List<Room> getJoinedRooms() {
@@ -624,28 +727,74 @@ class MatrixService {
     return resp.statusCode == 200;
   }
 
-  static Future<Room?> createDirectChat(String userId) async {
+  static Future<String?> _ensureMyUserId() async {
+    if (_myUserId != null) return _myUserId;
     if (_accessToken == null) return null;
-    if (!await userExists(userId)) return null;
 
-    final target = userId.startsWith('@')
-        ? userId
-        : '@$userId:${Uri.parse(_homeServerUrl).host}';
-    final uri = Uri.parse(
-        '$_homeServerUrl/_matrix/client/r0/createRoom?access_token=$_accessToken'
+    final uri = Uri.parse('$_homeServerUrl/_matrix/client/v3/account/whoami');
+    final r = await http.get(
+      uri,
+      headers: {'Authorization': 'Bearer $_accessToken'},
     );
 
-        final payload = jsonEncode({
-          'invite':    [target],
-          'is_direct': true,
-          'visibility':'private',
-          'preset':    'trusted_private_chat',
-        });
+    if (r.statusCode == 200) {
+      final body = jsonDecode(r.body) as Map<String, dynamic>;
+      _myUserId = body['user_id'] as String?;
+      if (_myUserId == null) {
+        print('whoami ok, but user_id is null: ${r.body}');
+      }
+      return _myUserId;
+    } else {
+      print('whoami failed ${r.statusCode}: ${r.body}');
+      return null;
+    }
+  }
+
+  static Future<Room?> createDirectChat(String rawUserId) async {
+    if (_accessToken == null) return null;
+
+    final myUserId = await _ensureMyUserId();
+    if (myUserId == null) {
+      print('createDirectChat: cannot resolve my userId');
+      return null;
+    }
+
+    final serverName = myUserId.split(':').last;
+
+    final target = rawUserId.startsWith('@') ? rawUserId : '@$rawUserId:$serverName';
+
+    try {
+      final exists = await userExists(target);
+      if (!exists) print('Warning: user may not exist or directory disabled: $target');
+    } catch (e) {
+      print('userExists check skipped due to error: $e');
+    }
+
+    final uri = Uri.parse('$_homeServerUrl/_matrix/client/v3/createRoom');
+
+    final payload = {
+      'invite': [target],
+      'is_direct': true,
+      'visibility': 'private',
+      'preset': 'private_chat',
+      'power_level_content_override': {
+        'users': {
+          myUserId: 100,
+          target: 100,
+        },
+        'users_default': 100,
+        'state_default': 100,
+        'events_default': 100,
+      },
+    };
 
     final response = await http.post(
       uri,
-      headers: {'Content-Type': 'application/json'},
-      body: payload,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_accessToken',
+      },
+      body: jsonEncode(payload),
     );
 
     if (response.statusCode == 200 || response.statusCode == 201) {
